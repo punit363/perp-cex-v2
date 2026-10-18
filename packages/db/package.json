@@ -1,0 +1,25 @@
+{
+  "name": "db",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "export": {
+    "./": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "bun check",
+    "postinstall": "prisma skills sync || exit 0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/pg": "^8.23.1"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "pg": "^8.23.1",
+    "prisma": "7.x.x"
+  }
+}

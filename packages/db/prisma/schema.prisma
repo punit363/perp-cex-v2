@@ -1,0 +1,84 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String  @id @default(uuid())
+  username    String
+  password    String
+  orders      Order[]
+  maker_fills Fill[]  @relation("maker_user")
+  taker_fills Fill[]  @relation("taker_user")
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+}
+
+enum OrderSide {
+  BID
+  ASK
+}
+
+enum OrderStatus {
+  FILLED
+  PARTIAL
+  OPEN
+  CANCELLED
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  user_id         String
+  market_id       String
+  order_type      OrderType
+  side            OrderSide
+  price           String
+  slippage        Int
+  quantity        String
+  filled_quantity String
+  initial_margin  String
+  status          OrderStatus
+  created_at      DateTime    @default(now())
+  updated_at      DateTime    @updatedAt
+
+  maker_fills Fill[] @relation("maker")
+  taker_fills Fill[] @relation("taker")
+  user        User   @relation(fields: [user_id], references: [id])
+}
+
+model Market {
+  id       String @id @default(uuid())
+  slug     String
+  imageUrl String
+}
+
+model Fill {
+  id         String   @id @default(uuid())
+  quantity   String
+  price      String
+  created_at DateTime @default(now())
+
+  // Foreign keys for Orders
+  maker_order_id String
+  taker_order_id String
+
+  // Foreign keys for Users
+  maker_id String
+  taker_id String
+
+  // Relations mapped to their specific unique foreign keys
+  maker_order Order @relation("maker", fields: [maker_order_id], references: [id])
+  taker_order Order @relation("taker", fields: [taker_order_id], references: [id])
+  maker_user  User  @relation("maker_user", fields: [maker_id], references: [id])
+  taker_user  User  @relation("taker_user", fields: [taker_id], references: [id])
+}
