@@ -1,0 +1,19 @@
+{
+  "name": "engine",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "bun check"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/redis": "^4.0.11"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "redis": "^6.3.0"
+  }
+}
