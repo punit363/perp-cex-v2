@@ -7,16 +7,14 @@ export const UserRepo = {
       cost: 10,
     });
 
-    await prisma.user.create({
+    const respone = await prisma.user.create({
       data: {
         username,
         password: hashedPassword,
       },
     });
 
-    const user = await UserRepo.get_user_by_username(username);
-
-    return user;
+    return respone;
   },
 
   get_user_by_username: async (username: string) => {
