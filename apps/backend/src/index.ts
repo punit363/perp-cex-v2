@@ -2,14 +2,15 @@ import express from "express";
 import router from "./routes/auth.route";
 import CONFIG from "./config";
 import cors from "cors";
+import apiRouter from "./routes";
 
 const app = express();
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const PORT = Number(CONFIG.port || 8000);
 
-app.use("/api/v1",router);
+app.use("/api/v1",apiRouter);
 
 app.listen(PORT, (error?: Error) => {
   if (error) {

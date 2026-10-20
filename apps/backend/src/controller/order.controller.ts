@@ -1,0 +1,67 @@
+import type { Request, Response } from "express";
+import { handleError, handleResponse } from "../utils/handler";
+
+import type { RequestToEngine } from "commons/src/index";
+import { loopback } from "../loopback";
+
+async function on_ramp(req: Request, res: Response) {
+  try {
+    const user_id = req.user_id as string;
+    const amount = req.body as string;
+
+    const engine_request: RequestToEngine = {
+      action: "ONRAMP",
+      user_id,
+      amount,
+    };
+
+    const engine_response = await loopback(engine_request);
+
+    return res.status(200).json(
+      handleResponse("On Ramp successfull.", 1, {
+        engine_response,
+      })
+    );
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    res
+      .status((error as { status_code?: number })?.status_code || 500)
+      .send(handleError(err.message, 0));
+  }
+}
+
+async function place_order(req: Request, res: Response) {
+  try {
+    const user_id = req.user_id as string;
+
+    const { market_id, price, quantity, side, type, equity } = req.body;
+    const order_id = "odr_" + Math.random().toString();
+
+    const engine_request: RequestToEngine = {
+      action: "PLACE_ORDER",
+      user_id,
+      order_id,
+      market_id,
+      price,
+      quantity,
+      side,
+      type,
+      equity,
+    };
+
+    const engine_response = await loopback(engine_request);
+
+    return res.status(200).json(
+      handleResponse("Order placed successfully.", 1, {
+        engine_response,
+      })
+    );
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    res
+      .status((error as { status_code?: number })?.status_code || 500)
+      .send(handleError(err.message, 0));
+  }
+}
+
+export { on_ramp, place_order };
