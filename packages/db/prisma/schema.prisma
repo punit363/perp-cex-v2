@@ -25,13 +25,13 @@ enum OrderType {
 }
 
 enum OrderSide {
-  BID
-  ASK
+  BUY
+  SELL
 }
 
 enum OrderStatus {
   FILLED
-  PARTIAL
+  PARTIALLY_FILLED
   OPEN
   CANCELLED
 }

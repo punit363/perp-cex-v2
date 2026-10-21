@@ -1,18 +1,23 @@
 enum OrderStatus {
-  OPEN,
-  PARTIALLY_FILLED,
-  CLOSED,
-  CANCELLED,
+  OPEN = "OPEN",
+  PARTIALLY_FILLED = "PARTIALLY_FILLED",
+  FILLED = "FILLED",
+  CANCELLED = "CANCELLED",
 }
 
 enum OrderSide {
-  LONG,
-  SHORT,
+  BUY = "BUY",
+  SELL = "SELL",
 }
 
 enum OrderType {
-  MARKET,
-  LIMIT,
+  MARKET = "MARKET",
+  LIMIT = "LIMIT",
 }
 
-export { OrderStatus, OrderType, OrderSide };
+enum PositionType {
+  LONG = "LONG",
+  SHORT = "SHORT",
+}
+
+export { OrderStatus, OrderType, OrderSide, PositionType };
