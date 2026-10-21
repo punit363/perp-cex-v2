@@ -1,4 +1,5 @@
 import { createClient } from "redis";
+import { RequestToEngineSchema } from "./zod/z";
 
 const client = createClient();
 client.connect();
@@ -24,13 +25,15 @@ while (true) {
 
   if (!request) {
     console.log("No request yet");
-    continue
+    continue;
   }
   for (const stream of request) {
     for (const message of stream.messages) {
       const request = JSON.parse(String(message.message.data));
 
-      console.log("Engine received:", request);
+      const parsed_request =
+        RequestToEngineSchema.parse(request);
+      console.log("Engine received:", parsed_request);
 
       await client.xAck("engine", "engine-group", message.id);
     }

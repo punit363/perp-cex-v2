@@ -1,0 +1,9 @@
+const MARKET_CONFIG = {
+  COLLATERAL_ASSET: process.env.COLLATERAL_ASSET,
+  LEVERAGE_LIMIT: process.env.LEVERAGE_LIMIT,
+  MAKER_FEE: process.env.MAKER_FEE,
+  TAKER_FEE: process.env.TAKER_FEE,
+  SATOSHI_SCALE: process.env.SATOSHI_SCALE
+};
+
+export default MARKET_CONFIG;

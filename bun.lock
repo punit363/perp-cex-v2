@@ -38,10 +38,13 @@
       "name": "engine",
       "dependencies": {
         "redis": "^6.3.0",
+        "sorted-btree": "^2.1.0",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "@types/bun": "latest",
         "@types/redis": "^4.0.11",
+        "commons": "workspace:*",
       },
       "peerDependencies": {
         "typescript": "^7",
@@ -1456,6 +1459,8 @@
     "signal-exit": ["signal-exit@4.1.0", "", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
 
     "sisteransi": ["sisteransi@1.0.5", "", {}, "sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg=="],
+
+    "sorted-btree": ["sorted-btree@2.1.0", "", {}, "sha512-AtYXy3lL+5jrATpbymC2bM8anN/3maLkmVCd94MzypnKjokfCid/zeS3rvXedv7W6ffSfqKIGdz3UaJPWRBZ0g=="],
 
     "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
 
