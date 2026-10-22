@@ -12,12 +12,20 @@ interface Position {
   reserved_margin: bigint;
   entry_price: bigint;
   realized_pnl: bigint;
-  funding_accrued:bigint
+  funding_accrued: bigint;
 }
 
 interface UserAccount {
-    user_id:string,
-    collateral:CollateralBalance,
-    position:Map<string,Position>, //market_id
-    orders:Set<string>  //Order_id
+  user_id: string;
+  collateral: CollateralBalance;
+  positions: Map<string, Position>; //market_id
+  orders: Set<string>; //Order_id
 }
+
+interface EngineResponse {
+  message: string;
+  status: number;
+  data: any;
+}
+
+export type { EngineResponse, UserAccount, Position, CollateralBalance };

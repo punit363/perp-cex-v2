@@ -1,8 +1,11 @@
 import { createClient } from "redis";
-import { RequestToEngineSchema } from "./zod/z";
+import { RequestToEngineSchema, type EngineCommand } from "./zod/z";
+import type { RequestToEngine } from "commons/src";
+import process_engine_order from "./engine";
 
 const client = createClient();
-client.connect();
+const publisher = createClient();
+await Promise.all([client.connect(), publisher.connect()]);
 
 try {
   await client.xGroupCreate("engine", "engine-group", "0", {
@@ -22,19 +25,43 @@ while (true) {
     { BLOCK: 0, COUNT: 1 }
   );
   console.log("No request yet");
-
   if (!request) {
     console.log("No request yet");
     continue;
   }
   for (const stream of request) {
     for (const message of stream.messages) {
-      const request = JSON.parse(String(message.message.data));
+      const { loopback_id, ...request_to_engine } = JSON.parse(
+        String(message.message.request)
+      );
 
-      const parsed_request =
-        RequestToEngineSchema.parse(request);
+      const parseResult = RequestToEngineSchema.safeParse(request_to_engine);
+
+      if (!parseResult.success) {
+        console.error("Invalid request:", parseResult.error);
+        await publisher.xAdd("backend", "*", {
+          response: JSON.stringify({
+            loopback_id,
+            message: "Parsing Error: Incorrect data format",
+            status: 0,
+            data: null,
+          }),
+        });
+        await client.xAck("engine", "engine-group", message.id);
+        continue;
+      }
+
+      const parsed_request: EngineCommand = parseResult.data;
       console.log("Engine received:", parsed_request);
 
+      const engine_response = process_engine_order(parsed_request);
+
+      await publisher.xAdd("backend", "*", {
+        response: JSON.stringify({
+          loopback_id,
+          ...engine_response,
+        }),
+      });
       await client.xAck("engine", "engine-group", message.id);
     }
   }

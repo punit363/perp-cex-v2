@@ -1,6 +1,6 @@
 import type { OrderSide, OrderType } from "./order.type";
 
-export type RequestToEngine =
+type RequestToEngine =
   | {
       action: "ONRAMP";
       user_id: string;
@@ -25,7 +25,7 @@ export type RequestToEngine =
   | {
       action: "GET_FUNDING_RATE";
       market_id: string;
-      funding_rate:string
+      funding_rate: string;
     }
   | {
       action: "SPOT_PRICE_UPDATE";
@@ -35,4 +35,16 @@ export type RequestToEngine =
   | {
       action: "GET_DEPTH";
       market_id: string;
+    }
+  | {
+      action: "GET_BALANCE";
+      user_id: string;
     };
+
+type ResponseFromEngine = {
+  message: string;
+  status: number;
+  data: any;
+};
+
+export type { RequestToEngine, ResponseFromEngine };

@@ -53,6 +53,10 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
     action: z.literal("GET_DEPTH"),
     market_id: z.string().min(1),
   }),
+  z.object({
+    action: z.literal("GET_BALANCE"),
+    user_id: z.string().min(1),
+  }),
 ]);
 
 type EngineCommand = z.output<typeof RequestToEngineSchema>;
