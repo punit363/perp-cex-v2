@@ -4,32 +4,6 @@ import { handleError, handleResponse } from "../utils/handler";
 import type { RequestToEngine } from "commons/src/index";
 import { loopback } from "../loopback";
 
-async function on_ramp(req: Request, res: Response) {
-  try {
-    const user_id = req.user_id as string;
-    const amount = req.body as string;
-
-    const engine_request: RequestToEngine = {
-      action: "ONRAMP",
-      user_id,
-      amount,
-    };
-
-    const engine_response = await loopback(engine_request);
-
-    return res.status(200).json(
-      handleResponse("On Ramp successfull.", 1, {
-        engine_response,
-      })
-    );
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    res
-      .status((error as { status_code?: number })?.status_code || 500)
-      .send(handleError(err.message, 0));
-  }
-}
-
 async function place_order(req: Request, res: Response) {
   try {
     const user_id = req.user_id as string;
@@ -64,4 +38,4 @@ async function place_order(req: Request, res: Response) {
   }
 }
 
-export { on_ramp, place_order };
+export {  place_order };
