@@ -1,4 +1,4 @@
-import { formatFixed, parseFixed } from "./math/fixed-point";
+import { formatFixed } from "./math/fixed-point";
 import type { EngineResponse, UserAccount } from "./types";
 import { engine_response } from "./utils";
 import type { EngineCommand } from "./zod/z";
