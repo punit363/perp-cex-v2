@@ -1,4 +1,4 @@
-import type { OrderSide, OrderType } from "./order.type";
+import type { OrderSide, OrderStatus, OrderType } from "./order.type";
 
 type RequestToEngine =
   | {
@@ -12,8 +12,10 @@ type RequestToEngine =
       market_id: string;
       price: string;
       quantity: string;
+      filled: string;
       side: OrderSide;
       type: OrderType;
+      status: OrderStatus;
       equity: string;
       order_id: string;
     }
@@ -21,6 +23,7 @@ type RequestToEngine =
       action: "CANCEL_ORDER";
       user_id: string;
       order_id: string;
+      market_id: string;
     }
   | {
       action: "GET_FUNDING_RATE";
@@ -41,10 +44,10 @@ type RequestToEngine =
       user_id: string;
     };
 
-type ResponseFromEngine = {
+interface EngineResponse {
   message: string;
   status: number;
   data: any;
-};
+}
 
-export type { RequestToEngine, ResponseFromEngine };
+export type { RequestToEngine, EngineResponse };

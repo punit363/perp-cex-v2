@@ -1,9 +1,10 @@
-import { OrderSide, OrderType } from "commons/src/order.type";
+import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import { parseFixed } from "../math/fixed-point";
 import z from "zod";
 
 const OrderSideSchema = z.enum(OrderSide);
 const OrderTypeSchema = z.enum(OrderType);
+const OrderStatusSchema = z.enum(OrderStatus);
 
 const decimalToFixed = z.string().transform((value, context) => {
   try {
@@ -31,13 +32,16 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
     price: decimalToFixed,
     quantity: decimalToFixed,
     equity: decimalToFixed,
+    filled: decimalToFixed,
     type: OrderTypeSchema,
+    status: OrderStatusSchema,
     side: OrderSideSchema,
   }),
   z.object({
     action: z.literal("CANCEL_ORDER"),
     order_id: z.string().min(1),
     user_id: z.string().min(1),
+    market_id: z.string().min(1),
   }),
   z.object({
     action: z.literal("GET_FUNDING_RATE"),

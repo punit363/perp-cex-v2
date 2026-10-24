@@ -1,4 +1,4 @@
-import type { RequestToEngine, ResponseFromEngine } from "commons/src";
+import type { RequestToEngine, EngineResponse } from "commons/src";
 import { handleError, handleResponse } from "../utils/handler";
 import { loopback } from "../loopback";
 import type { Request, Response } from "express";
@@ -14,7 +14,7 @@ async function on_ramp(req: Request, res: Response) {
       amount: request.amount,
     };
 
-    const engine_response = await loopback(engine_request) as ResponseFromEngine;
+    const engine_response = await loopback(engine_request) as EngineResponse;
 
     if (!engine_response.status) {
       return res.status(400).json(
@@ -46,7 +46,7 @@ async function get_balance(req: Request, res: Response) {
       user_id,
     };
 
-    const engine_response = await loopback(engine_request) as ResponseFromEngine;
+    const engine_response = await loopback(engine_request) as EngineResponse;
 
     if (!engine_response.status) {
       return res.status(400).json(
