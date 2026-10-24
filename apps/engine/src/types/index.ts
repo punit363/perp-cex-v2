@@ -30,7 +30,7 @@ interface UserAccount {
 interface OrderNode {
   order_id: string;
   user_id: string;
-  quanity: bigint;
+  quantity: bigint;
   filled: bigint;
   side: OrderSide;
   level: PriceLevel;
@@ -45,12 +45,6 @@ interface PriceLevel {
   tail: OrderNode | null;
 }
 
-interface EngineResponse {
-  message: string;
-  status: number;
-  data: any;
-}
-
 interface Order {
   user_id: string;
   order_id: string;
@@ -63,12 +57,32 @@ interface Order {
   market_id: string;
 }
 
+interface Fill {
+  maker_user_id: string;
+  maker_order_id: string;
+  taker_user_id: string;
+  taker_order_id: string;
+  trade_id: string;
+  price: bigint;
+  filled: bigint;
+}
+
+interface PlaceOrderResult {
+  order: {
+    order_id: string;
+    filled: bigint;
+    status: OrderStatus;
+  };
+  fills: Fill[];
+}
+
 export type {
-  EngineResponse,
   UserAccount,
   Position,
   CollateralBalance,
   PriceLevel,
   OrderNode,
   Order,
+  Fill,
+  PlaceOrderResult,
 };

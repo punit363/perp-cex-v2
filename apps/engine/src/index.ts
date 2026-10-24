@@ -1,7 +1,8 @@
 import { createClient } from "redis";
 import { RequestToEngineSchema, type EngineCommand } from "./zod/z";
-import type { RequestToEngine } from "commons/src";
-import process_engine_order from "./engine";
+import Engine from "./engine";
+
+const engine = new Engine();
 
 const client = createClient();
 const publisher = createClient();
@@ -54,7 +55,9 @@ while (true) {
       const parsed_request: EngineCommand = parseResult.data;
       console.log("Engine received:", parsed_request);
 
-      const engine_response = process_engine_order(parsed_request);
+
+
+      const engine_response = engine.processEngineOrder(parsed_request);
 
       await publisher.xAdd("backend", "*", {
         response: JSON.stringify({

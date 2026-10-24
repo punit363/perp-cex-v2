@@ -1,44 +1,57 @@
 import BTree from "sorted-btree";
-import type { Order, OrderNode, PriceLevel, UserAccount } from "./types";
-import type { bigint, number } from "zod";
+import type { Fill, Order, OrderNode, PriceLevel } from "./types";
 import { formatFixed } from "./math/fixed-point";
+import { generate_trade_id, min } from "./utils";
+import { OrderStatus } from "commons/src/order.type";
 
 class Orderbook {
   private asks = new BTree<bigint, PriceLevel>(undefined, this.comparePrice);
   private bids = new BTree<bigint, PriceLevel>(undefined, this.comparePrice);
   private orders = new Map<string, OrderNode>();
+  private lastTradedPrice: bigint;
+  private lastTradeId: string;
 
   constructor(
     asks: BTree<bigint, PriceLevel>,
     bids: BTree<bigint, PriceLevel>,
-    orders: Map<string, OrderNode>
+    orders: Map<string, OrderNode>,
+    lastTradedPrice: bigint,
+    lastTradeId: string
   ) {
     this.asks = asks;
     this.bids = bids;
     this.orders = orders;
+    this.lastTradedPrice = lastTradedPrice;
+    this.lastTradeId = lastTradeId;
   }
 
   private comparePrice(a: bigint, b: bigint) {
     return a < b ? -1 : a > b ? 1 : 0;
   }
 
+  private updateMarketData(fills: Fill[]) {
+    if (fills.length > 0) {
+      const lastFill = fills[fills.length - 1];
+      if (lastFill) {
+        this.lastTradeId = lastFill.trade_id;
+      }
+    }
+  }
+
+  public fetchMarketData() {
+    return {
+      last_trade_id: this.lastTradeId,
+      last_traded_price: this.lastTradedPrice,
+    };
+  }
+
   insertOrder(order: Order) {
     const price = order.price;
-    const quanity = order.quantity;
+    const quantity = order.quantity;
     const filled = order.filled;
 
-    if (this.orders.has(order.order_id)) {
-      throw new Error("This Order ID already exists");
-    }
-
-    if (filled >= quanity || filled < 0) {
-      throw new Error(
-        "Filled cannot exceed or be eqaual to Quanitity while insertion"
-      );
-    }
-
     if (order.type == "LIMIT") {
-      if (price <= 0n || quanity <= 0n) {
+      if (price <= 0n || quantity <= 0n) {
         throw new Error("Price and Quatity cannot be negative");
       }
       let price_level;
@@ -69,12 +82,12 @@ class Orderbook {
         throw new Error("Order side must be buy or sell");
       }
 
-      price_level.remaining_qty += quanity - filled;
+      price_level.remaining_qty += quantity - filled;
 
       const order_node: OrderNode = {
         order_id: order.order_id,
         user_id: order.user_id,
-        quanity,
+        quantity,
         filled: order.filled,
         level: price_level,
         side: order.side,
@@ -125,7 +138,10 @@ class Orderbook {
       return;
     }
 
-    price_level.remaining_qty -= order.quanity - order.filled;
+    const rem_qty = order.quantity - order.filled;
+    const price = price_level.price;
+
+    price_level.remaining_qty -= order.quantity - order.filled;
     if (price_level.remaining_qty <= 0) {
       order.side == "SELL"
         ? this.asks.delete(order.level.price)
@@ -146,11 +162,21 @@ class Orderbook {
       order.next.prev = order.prev;
     }
 
-    //TODO: Handle balances in engine.ts after orderbook is modified
-    // user.collateral.reserved -= order.quanity * price;
-    // user.collateral.available += order.quanity * price;
-
     this.orders.delete(order_id);
+
+    return {
+      order_id,
+      rem_qty,
+      price,
+    };
+  }
+
+  removeOrder(odr: OrderNode) {
+    if (odr.prev) odr.prev.next = odr.next;
+    if (odr.next) odr.next.prev = odr.prev;
+    if (odr.level.head == odr) odr.level.head = odr.next;
+    if (odr.level.tail == odr) odr.level.tail = odr.prev;
+    this.orders.delete(odr.order_id);
   }
 
   getDepth() {
@@ -184,4 +210,170 @@ class Orderbook {
 
     return depth;
   }
+
+  process_sell_order(order: Order) {
+    const odr_price = order.price;
+    const odr_quantity = order.quantity;
+    let odr_filled = order.filled;
+    const fills: Fill[] = [];
+
+    if (order.type == "LIMIT") {
+      let pair = this.bids.nextLowerPair(undefined);
+      while (pair && odr_filled < odr_quantity) {
+        const [price, level] = pair;
+        if (price < odr_price) break;
+
+        let current_node = level.head;
+
+        while (odr_filled != odr_quantity) {
+          if (!current_node) break;
+          let { user_id, order_id, quantity, next } = current_node;
+
+          const rem_odr_qty = odr_quantity - odr_filled;
+          const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
+
+          odr_filled += fill_qty;
+          current_node.filled += fill_qty;
+          level.remaining_qty -= fill_qty;
+
+          const fill: Fill = {
+            trade_id: generate_trade_id(),
+            maker_order_id: order_id,
+            maker_user_id: user_id,
+            taker_order_id: order.order_id,
+            taker_user_id: order.user_id,
+            price,
+            filled: fill_qty,
+          };
+          fills.push(fill);
+
+          if (quantity == current_node.filled) {
+            this.removeOrder(current_node);
+          }
+          current_node = next;
+        }
+        if (level.remaining_qty == 0n) {
+          this.bids.delete(price);
+        }
+        pair = this.bids.nextLowerPair(price);
+      }
+
+      if (odr_quantity - odr_filled) {
+        odr_filled == 0n
+          ? (order.status = OrderStatus.OPEN)
+          : (order.status = OrderStatus.PARTIALLY_FILLED);
+        this.insertOrder({ ...order, filled: odr_filled });
+      } else {
+        order.status = OrderStatus.FILLED;
+      }
+    } else if (order.type == "MARKET") {
+      //TODO: Market Order to be handled
+    } else {
+      throw new Error("Order can only be of type limit and market");
+    }
+
+    this.updateMarketData(fills);
+    return {
+      order: {
+        order_id: order.order_id,
+        filled: odr_filled,
+        status: order.status,
+      },
+      fills,
+    };
+  }
+
+  process_buy_order(order: Order) {
+    const odr_price = order.price;
+    const odr_quantity = order.quantity;
+    let odr_filled = order.filled;
+    const fills: Fill[] = [];
+
+    if (order.type == "LIMIT") {
+      let pair = this.asks.nextHigherPair(undefined);
+      while (pair && odr_filled < odr_quantity) {
+        const [price, level] = pair;
+        if (price > odr_price) break;
+
+        let current_node = level.head;
+
+        while (odr_filled != odr_quantity) {
+          if (!current_node) break;
+          let { user_id, order_id, quantity, next } = current_node;
+
+          const rem_odr_qty = odr_quantity - odr_filled;
+          const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
+
+          odr_filled += fill_qty;
+          current_node.filled += fill_qty;
+          level.remaining_qty -= fill_qty;
+
+          const fill: Fill = {
+            trade_id: generate_trade_id(),
+            maker_order_id: order_id,
+            maker_user_id: user_id,
+            taker_order_id: order.order_id,
+            taker_user_id: order.user_id,
+            price,
+            filled: fill_qty,
+          };
+          fills.push(fill);
+
+          if (quantity == current_node.filled) {
+            this.removeOrder(current_node);
+          }
+          current_node = next;
+        }
+        if (level.remaining_qty == 0n) {
+          this.asks.delete(price);
+        }
+        pair = this.asks.nextHigherPair(price);
+      }
+
+      if (odr_quantity - odr_filled) {
+        odr_filled == 0n
+          ? (order.status = OrderStatus.OPEN)
+          : (order.status = OrderStatus.PARTIALLY_FILLED);
+
+        this.insertOrder({ ...order, filled: odr_filled });
+      } else {
+        order.status = OrderStatus.FILLED;
+      }
+    } else if (order.type == "MARKET") {
+      //TODO: Market Order to be handled
+    } else {
+      throw new Error("Order can only be of type limit and market");
+    }
+
+    this.updateMarketData(fills);
+    return {
+      order: {
+        order_id: order.order_id,
+        filled: odr_filled,
+        status: order.status,
+      },
+      fills,
+    };
+  }
+
+  place_order(order: Order) {
+    if (this.orders.has(order.order_id)) {
+      throw new Error("This Order ID already exists");
+    }
+
+    if (order.filled >= order.quantity || order.filled < 0) {
+      throw new Error(
+        "Filled cannot exceed or be eqaual to Quanitity while insertion"
+      );
+    }
+    if (order.side == "BUY") {
+      return this.process_buy_order(order);
+    } else if (order.side == "SELL") {
+      return this.process_sell_order(order);
+    } else {
+      throw new Error("Order can only be placed for buy and sell");
+    }
+  }
 }
+
+export default Orderbook;
