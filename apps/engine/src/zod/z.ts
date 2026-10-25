@@ -31,7 +31,7 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
     order_id: z.string().min(1),
     price: decimalToFixed,
     quantity: decimalToFixed,
-    equity: decimalToFixed,
+    leverage: decimalToFixed,
     filled: decimalToFixed,
     type: OrderTypeSchema,
     status: OrderStatusSchema,

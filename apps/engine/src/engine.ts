@@ -4,7 +4,10 @@ import { engine_response } from "./utils";
 import type { EngineCommand } from "./zod/z";
 import Orderbook from "./orderbook";
 import BTree from "sorted-btree";
-import { calculateNotional } from "./math/financial-math";
+import {
+  calculateInitialMargin,
+  calculateNotional,
+} from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
 
 //TODO: Add a crash recovery system that has orderbooks from all markets and also feeds the orderbooks
@@ -101,7 +104,7 @@ class Engine {
 
       case "PLACE_ORDER": {
         try {
-          const { action, equity, user_id, price, quantity, ...order } =
+          const { action, leverage, user_id, price, quantity, ...order } =
             request;
 
           const orderbook = this.orderbooks.get(order.market_id);
@@ -116,7 +119,8 @@ class Engine {
           }
 
           const notional = calculateNotional(price, quantity);
-          if (user_acc.collateral.available < notional) {
+          const initial_margin = calculateInitialMargin(notional, leverage);
+          if (user_acc.collateral.available < initial_margin) {
             throw new Error("Insufficient funds");
           }
 
@@ -124,10 +128,11 @@ class Engine {
             user_id,
             price,
             quantity,
+            leverage,
             ...order,
           });
 
-          this.updateCollateral(user_id, -notional, notional);
+          this.updateCollateral(user_id, -initial_margin, initial_margin);
 
           const response = {
             order: {
@@ -165,12 +170,14 @@ class Engine {
             throw new Error("Cancel order failed");
           }
 
-          const { order_id, rem_qty, price } = cancelResult;
+          const { order_id, rem_qty, price, leverage } = cancelResult;
 
+          const notional = calculateNotional(price, rem_qty);
+          const initial_margin = calculateInitialMargin(notional, leverage);
           this.updateCollateral(
             request.user_id,
-            calculateNotional(price, rem_qty),
-            -calculateNotional(price, rem_qty)
+            initial_margin,
+            -initial_margin
           );
 
           return engine_response("Order cancelled successfully", 1, {

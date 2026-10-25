@@ -83,7 +83,9 @@ describe("engine request schema", () => {
       order_id: "order-1",
       price: "65000.25",
       quantity: "0.01",
-      equity: "1000",
+      leverage: "5",
+      filled: "0",
+      status: "OPEN",
       type: "LIMIT",
       side: "BUY",
     });

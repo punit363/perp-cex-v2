@@ -16,7 +16,7 @@ type RequestToEngine =
       side: OrderSide;
       type: OrderType;
       status: OrderStatus;
-      equity: string;
+      leverage: string;
       order_id: string;
     }
   | {

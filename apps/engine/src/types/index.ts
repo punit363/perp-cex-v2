@@ -32,6 +32,7 @@ interface OrderNode {
   user_id: string;
   quantity: bigint;
   filled: bigint;
+  leverage: bigint;
   side: OrderSide;
   level: PriceLevel;
   prev: OrderNode | null;
@@ -51,6 +52,7 @@ interface Order {
   quantity: bigint;
   price: bigint;
   filled: bigint;
+  leverage: bigint;
   side: OrderSide;
   type: OrderType;
   status: OrderStatus;

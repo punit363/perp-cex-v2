@@ -9,7 +9,7 @@ async function place_order(req: Request, res: Response) {
   try {
     const user_id = req.user_id as string;
 
-    const { market_id, price, quantity, side, type, equity } = req.body;
+    const { market_id, price, quantity, side, type, leverage } = req.body;
     const order_id = "odr_" + Math.random().toString();
 
     const engine_request: RequestToEngine = {
@@ -23,7 +23,7 @@ async function place_order(req: Request, res: Response) {
       status: OrderStatus.OPEN,
       side,
       type,
-      equity,
+      leverage,
     };
 
     const engine_response = await loopback(engine_request) as EngineResponse;

@@ -2,7 +2,11 @@ import BTree from "sorted-btree";
 import type { Fill, Order, OrderNode, PriceLevel } from "./types";
 import { formatFixed } from "./math/fixed-point";
 import { generate_trade_id, min } from "./utils";
-import { OrderStatus } from "commons/src/order.type";
+import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
+import {
+  calculateInitialMargin,
+  calculateNotional,
+} from "./math/financial-math";
 
 class Orderbook {
   private asks = new BTree<bigint, PriceLevel>(undefined, this.comparePrice);
@@ -51,13 +55,13 @@ class Orderbook {
     const quantity = order.quantity;
     const filled = order.filled;
 
-    if (order.type == "LIMIT") {
+    if (order.type == OrderType.LIMIT) {
       if (price <= 0n || quantity <= 0n) {
         throw new Error("Price and Quatity cannot be negative");
       }
       let price_level;
 
-      if (order.side == "SELL") {
+      if (order.side == OrderSide.SELL) {
         price_level = this.asks.get(price);
         if (!price_level) {
           price_level = {
@@ -68,7 +72,7 @@ class Orderbook {
           };
           this.asks.set(price, price_level);
         }
-      } else if (order.side == "BUY") {
+      } else if (order.side == OrderSide.BUY) {
         price_level = this.bids.get(order.price);
         if (!price_level) {
           price_level = {
@@ -90,6 +94,7 @@ class Orderbook {
         user_id: order.user_id,
         quantity,
         filled: order.filled,
+        leverage: order.leverage,
         level: price_level,
         side: order.side,
         prev: null,
@@ -169,6 +174,7 @@ class Orderbook {
       order_id,
       rem_qty,
       price,
+      leverage: order.leverage,
     };
   }
 
@@ -216,6 +222,7 @@ class Orderbook {
     const odr_price = order.price;
     const odr_quantity = order.quantity;
     let odr_filled = order.filled;
+
     const fills: Fill[] = [];
 
     if (order.type == "LIMIT") {
