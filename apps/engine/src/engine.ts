@@ -186,7 +186,25 @@ class Engine {
       }
 
       case "GET_DEPTH": {
-        return engine_response("Updating soon", 0);
+        try {
+          const { market_id } = request;
+
+          const orderbook = this.orderbooks.get(market_id);
+
+          if (!orderbook) {
+            throw new Error("Incorrect Market ID");
+          }
+
+          const response = orderbook.getDepth();
+
+          return engine_response("Depth fetched successfully", 1, {
+            ...response,
+          });
+        } catch (error) {
+          console.log(error);
+          const err = error instanceof Error ? error : new Error(String(error));
+          return engine_response(err.message, 0);
+        }
       }
       case "SPOT_PRICE_UPDATE": {
         return engine_response("Updating soon", 0);

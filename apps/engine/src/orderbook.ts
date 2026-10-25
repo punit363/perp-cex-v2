@@ -34,6 +34,7 @@ class Orderbook {
       const lastFill = fills[fills.length - 1];
       if (lastFill) {
         this.lastTradeId = lastFill.trade_id;
+        this.lastTradedPrice = lastFill.price;
       }
     }
   }

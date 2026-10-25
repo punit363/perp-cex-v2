@@ -3,6 +3,7 @@ import adminRouter from "./admin.route";
 import authRouter from "./auth.route";
 import orderRouter from "./order.routes";
 import userRouter from "./user.route";
+import marketRouter from "./market.route";
 
 const apiRouter = Router()
 
@@ -10,5 +11,6 @@ apiRouter.use("/admin",adminRouter);
 apiRouter.use("/auth",authRouter);
 apiRouter.use("/order",orderRouter);
 apiRouter.use("/user",userRouter);
+apiRouter.use("/market",marketRouter);
 
 export default apiRouter;
