@@ -49,9 +49,12 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
     funding_rate: decimalToFixed,
   }),
   z.object({
-    action: z.literal("SPOT_PRICE_UPDATE"),
+    action: z.literal("MARK_PRICE_UPDATE"),
     market_id: z.string().min(1),
     mark_price: decimalToFixed,
+    source_timestamp: z.number().int().nonnegative(),
+    producer_id: z.string().min(1),
+    sequence: z.string().regex(/^\d+$/),
   }),
   z.object({
     action: z.literal("GET_DEPTH"),
@@ -59,6 +62,11 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("GET_BALANCE"),
+    user_id: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal("GET_POSITION"),
+    market_id: z.string().min(1),
     user_id: z.string().min(1),
   }),
 ]);

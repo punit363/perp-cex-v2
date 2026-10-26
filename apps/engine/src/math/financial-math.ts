@@ -24,6 +24,17 @@ export function calculateInitialMargin(notional: bigint, leverage: bigint): bigi
   return divideFixed(notional, leverage, "ceil");
 }
 
+/** Maintenance margin rounds up so the risk requirement is never understated. */
+export function calculateMaintenanceMargin(
+  notional: bigint,
+  maintenanceRate: bigint
+): bigint {
+  if (notional < 0n || maintenanceRate < 0n) {
+    throw new Error("Notional and maintenance rate must be non-negative");
+  }
+  return multiplyFixed(notional, maintenanceRate, "ceil");
+}
+
 /** Signed position PnL is floored: gains are not over-credited and losses are not under-debited. */
 export function calculateSignedPnl(priceDelta: bigint, signedQuantity: bigint): bigint {
   return multiplyFixed(priceDelta, signedQuantity, "floor");

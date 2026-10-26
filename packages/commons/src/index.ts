@@ -31,9 +31,12 @@ type RequestToEngine =
       funding_rate: string;
     }
   | {
-      action: "SPOT_PRICE_UPDATE";
+      action: "MARK_PRICE_UPDATE";
       market_id: string;
       mark_price: string;
+      source_timestamp: number;
+      producer_id: string;
+      sequence: string;
     }
   | {
       action: "GET_DEPTH";
@@ -41,6 +44,11 @@ type RequestToEngine =
     }
   | {
       action: "GET_BALANCE";
+      user_id: string;
+    }
+  | {
+      action: "GET_POSITION";
+      market_id: string;
       user_id: string;
     };
 

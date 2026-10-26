@@ -7,11 +7,13 @@ import AccountStore from "./accounts";
 import BTree from "sorted-btree";
 import {
   calculateInitialMargin,
+  calculateMaintenanceMargin,
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
 import { OrderSide, PositionType } from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
+import MARKET_CONFIG from "./config/market.config";
 
 type CommandOf<Action extends EngineCommand["action"]> = Extract<
   EngineCommand,
@@ -22,7 +24,15 @@ type CommandOf<Action extends EngineCommand["action"]> = Extract<
 class Engine {
   private orderbooks = new Map<string, Orderbook>();
   private accounts = new AccountStore();
-  private TEMP_MARK_PRICE = 10000000000n;
+  private markPrices = new Map<string, bigint>();
+  private markPriceMetadata = new Map<
+    string,
+    { producer_id: string; source_timestamp: number; sequence: bigint }
+  >();
+  private readonly MAX_MARK_PRICE_AGE_MS = 5_000;
+  private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS = 1_000;
+  private MAINTENANCE_MARGIN_RATE: bigint;
+  private positionUsersByMarket = new Map<string, Set<string>>(); //market->users>
 
   constructor() {
     //Logic to read from recovery system
@@ -31,6 +41,12 @@ class Engine {
       new Orderbook(new BTree(), new BTree(), new Map(), 0n, "")
     );
     this.accounts.getOrCreate("user123");
+    this.positionUsersByMarket.set(
+      "market123",
+      new Set(["user-1", "user-2", "user-3"])
+    );
+    this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
+    this.markPrices.set("market123", 10000000000n);
   }
 
   processEngineOrder = (request: EngineCommand): EngineResponse => {
@@ -46,7 +62,10 @@ class Engine {
           return this.cancelOrder(request);
         case "GET_DEPTH":
           return this.getDepth(request);
-        case "SPOT_PRICE_UPDATE":
+        case "GET_POSITION":
+          return this.getPosition(request);
+        case "MARK_PRICE_UPDATE":
+          return this.markPriceUpdate(request);
         case "GET_FUNDING_RATE":
           return engine_response("Updating soon", 0);
         default:
@@ -133,6 +152,11 @@ class Engine {
       ...order,
     });
 
+    const mark_price = this.markPrices.get(market_id);
+    if (!mark_price) {
+      throw new Error("Mark Price not found for this market ID");
+    }
+
     if (result.fills.length > 0) {
       let taker_acc = this.accounts.get(user_id);
       if (!taker_acc) {
@@ -171,6 +195,7 @@ class Engine {
             funding_accrued: 0n,
           };
           taker_acc?.positions.set(market_id, taker_position);
+          this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
         }
         if (order_position_type == taker_position.type) {
           const margin_reserved = calculateInitialMargin(
@@ -187,11 +212,11 @@ class Engine {
           );
           taker_position.quantity += fill.filled;
           //TODO: where does current_market_price come from?
-          taker_position.unrealized_pnl += calcUnrealisedPnL(
+          taker_position.unrealized_pnl = calcUnrealisedPnL(
             order_position_type,
-            this.TEMP_MARK_PRICE,
+            mark_price,
             taker_position.avg_entry_price,
-            fill.filled
+            taker_position.quantity
           );
         } else {
           if (taker_position.quantity <= fill.filled) {
@@ -214,6 +239,9 @@ class Engine {
 
             //delete the redundant position
             taker_acc.positions.delete(market_id);
+            this.positionUsersByMarket
+              .get(market_id)
+              ?.delete(taker_acc.user_id);
 
             if (taker_position.quantity < fill.filled) {
               //create new
@@ -242,14 +270,15 @@ class Engine {
               );
               taker_position.quantity += rem_qty;
               //TODO: where does current_market_price come from?
-              taker_position.unrealized_pnl += calcUnrealisedPnL(
+              taker_position.unrealized_pnl = calcUnrealisedPnL(
                 order_position_type,
-                this.TEMP_MARK_PRICE,
+                mark_price,
                 taker_position.avg_entry_price,
                 rem_qty
               );
 
               taker_acc.positions.set(market_id, taker_position);
+              this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
             }
           } else {
             const margin_released = divideRounded(
@@ -268,7 +297,7 @@ class Engine {
             taker_position.quantity -= fill.filled;
             taker_position.unrealized_pnl = calcUnrealisedPnL(
               taker_position.type,
-              this.TEMP_MARK_PRICE,
+              mark_price,
               taker_position.avg_entry_price,
               taker_position.quantity
             );
@@ -305,6 +334,7 @@ class Engine {
             funding_accrued: 0n,
           };
           maker_acc?.positions.set(market_id, maker_position);
+          this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
         }
 
         let maker_position_margin_added = 0n;
@@ -323,11 +353,11 @@ class Engine {
           );
           maker_position.quantity += fill.filled;
           //TODO: where does current_market_price come from?
-          maker_position.unrealized_pnl += calcUnrealisedPnL(
+          maker_position.unrealized_pnl = calcUnrealisedPnL(
             maker_position.type,
-            this.TEMP_MARK_PRICE,
+            mark_price,
             maker_position.avg_entry_price,
-            fill.filled
+            maker_position.quantity
           );
         } else {
           if (maker_position.quantity <= fill.filled) {
@@ -350,6 +380,7 @@ class Engine {
 
             //delete the redundant position
             maker_acc.positions.delete(market_id);
+            this.positionUsersByMarket.get(market_id)?.delete(maker_acc.user_id);
 
             if (maker_position.quantity < fill.filled) {
               //create new
@@ -381,14 +412,15 @@ class Engine {
               );
               maker_position.quantity += rem_qty;
               //TODO: where does current_market_price come from?
-              maker_position.unrealized_pnl += calcUnrealisedPnL(
+              maker_position.unrealized_pnl = calcUnrealisedPnL(
                 maker_position.type,
-                this.TEMP_MARK_PRICE,
+                mark_price,
                 maker_position.avg_entry_price,
                 rem_qty
               );
 
               maker_acc.positions.set(market_id, maker_position);
+              this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
             }
           } else {
             const margin_released = divideRounded(
@@ -407,7 +439,7 @@ class Engine {
             maker_position.quantity -= fill.filled;
             maker_position.unrealized_pnl = calcUnrealisedPnL(
               maker_position.type,
-              this.TEMP_MARK_PRICE,
+              mark_price,
               maker_position.avg_entry_price,
               maker_position.quantity
             );
@@ -482,6 +514,106 @@ class Engine {
 
     const response = orderbook.getDepth();
     return engine_response("Depth fetched successfully", 1, { ...response });
+  }
+
+  private getPosition(request: CommandOf<"GET_POSITION">): EngineResponse {
+    const account = this.accounts.get(request.user_id);
+    if (!account) {
+      throw new Error("Incorrect User ID");
+    }
+
+    const position = account.positions.get(request.market_id);
+
+    if (!position) {
+      return engine_response("Position does not exist for this market", 1);
+    }
+
+    const response = {
+      market_id: position.market_id,
+      type: position.type,
+      quantity: formatFixed(position.quantity),
+      reserved_margin: formatFixed(position.reserved_margin),
+      avg_entry_price: formatFixed(position.avg_entry_price),
+      unrealized_pnl: formatFixed(position.unrealized_pnl),
+      funding_accrued: formatFixed(position.funding_accrued),
+    };
+
+    return engine_response("Position fetched successfully", 1, { ...response });
+  }
+
+  private markPriceUpdate(
+    request: CommandOf<"MARK_PRICE_UPDATE">
+  ): EngineResponse {
+    const {
+      market_id,
+      mark_price,
+      source_timestamp,
+      producer_id,
+      sequence,
+    } = request;
+
+    const parsed_sequence = BigInt(sequence);
+    const latest_metadata = this.markPriceMetadata.get(market_id);
+    const now = Date.now();
+
+    if (
+      source_timestamp < now - this.MAX_MARK_PRICE_AGE_MS ||
+      source_timestamp > now + this.MAX_MARK_PRICE_CLOCK_SKEW_MS ||
+      (latest_metadata &&
+        (source_timestamp < latest_metadata.source_timestamp ||
+          (producer_id === latest_metadata.producer_id &&
+            parsed_sequence <= latest_metadata.sequence) ||
+          (source_timestamp === latest_metadata.source_timestamp &&
+            parsed_sequence <= latest_metadata.sequence)))
+    ) {
+      return engine_response("Stale mark price update ignored", 0);
+    }
+
+    this.markPrices.set(market_id, mark_price);
+    this.markPriceMetadata.set(market_id, {
+      producer_id,
+      source_timestamp,
+      sequence: parsed_sequence,
+    });
+
+    const users_with_position = this.positionUsersByMarket.get(market_id);
+
+    if (!users_with_position?.size) {
+      return engine_response("No positions to recalibrate", 1, {
+        response: "res",
+      });
+    }
+
+    for (const user_id of users_with_position) {
+      const position = this.accounts.get(user_id)?.positions.get(market_id);
+
+      if (!position) {
+        continue;
+      }
+
+      position.unrealized_pnl = calcUnrealisedPnL(
+        position.type,
+        mark_price,
+        position.avg_entry_price,
+        position.quantity
+      );
+
+      const position_equity =
+        position.reserved_margin + position.unrealized_pnl;
+      const maintenance_margin_rate = this.MAINTENANCE_MARGIN_RATE;
+
+      const maintenance_requirement = calculateMaintenanceMargin(
+        calculateNotional(mark_price, position.quantity),
+        maintenance_margin_rate
+      );
+
+      if (position_equity <= maintenance_requirement) {
+        //trigger liquidity
+      }
+      // how to recalibrate margin if no leverage available?
+      // position.reserved_margin = cal
+    }
+    return engine_response("Positions recalibrated successfully", 1, null);
   }
 }
 
