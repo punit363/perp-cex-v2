@@ -15,8 +15,8 @@ interface Position {
   type: PositionType;
   quantity: bigint;
   reserved_margin: bigint;
-  entry_price: bigint;
-  realized_pnl: bigint;
+  avg_entry_price: bigint;
+  unrealized_pnl: bigint;
   funding_accrued: bigint;
 }
 
@@ -66,6 +66,7 @@ interface Fill {
   taker_order_id: string;
   trade_id: string;
   price: bigint;
+  maker_leverage: bigint;
   filled: bigint;
 }
 

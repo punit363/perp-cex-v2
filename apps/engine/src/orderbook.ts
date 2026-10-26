@@ -251,6 +251,7 @@ class Orderbook {
             taker_order_id: order.order_id,
             taker_user_id: order.user_id,
             price,
+            maker_leverage: current_node.leverage,
             filled: fill_qty,
           };
           fills.push(fill);
@@ -322,6 +323,7 @@ class Orderbook {
             maker_user_id: user_id,
             taker_order_id: order.order_id,
             taker_user_id: order.user_id,
+            maker_leverage: current_node.leverage,
             price,
             filled: fill_qty,
           };
