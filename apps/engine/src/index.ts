@@ -32,22 +32,36 @@ while (true) {
   }
   for (const stream of request) {
     for (const message of stream.messages) {
-      const { loopback_id, ...request_to_engine } = JSON.parse(
-        String(message.message.request)
-      );
+      const raw_request: unknown = JSON.parse(String(message.message.request));
+      if (
+        typeof raw_request !== "object" ||
+        raw_request === null ||
+        Array.isArray(raw_request)
+      ) {
+        console.error("Invalid request: expected a JSON object");
+        await client.xAck("engine", "engine-group", message.id);
+        continue;
+      }
+
+      const { loopback_id, ...request_to_engine } = raw_request as Record<
+        string,
+        unknown
+      >;
 
       const parseResult = RequestToEngineSchema.safeParse(request_to_engine);
 
       if (!parseResult.success) {
         console.error("Invalid request:", parseResult.error);
-        await publisher.xAdd("backend", "*", {
-          response: JSON.stringify({
-            loopback_id,
-            message: "Parsing Error: Incorrect data format",
-            status: 0,
-            data: null,
-          }),
-        });
+        if (typeof loopback_id === "string") {
+          await publisher.xAdd("backend", "*", {
+            response: JSON.stringify({
+              loopback_id,
+              message: "Parsing Error: Incorrect data format",
+              status: 0,
+              data: null,
+            }),
+          });
+        }
         await client.xAck("engine", "engine-group", message.id);
         continue;
       }
@@ -55,16 +69,16 @@ while (true) {
       const parsed_request: EngineCommand = parseResult.data;
       console.log("Engine received:", parsed_request);
 
-
-
       const engine_response = engine.processEngineOrder(parsed_request);
 
-      await publisher.xAdd("backend", "*", {
-        response: JSON.stringify({
-          loopback_id,
-          ...engine_response,
-        }),
-      });
+      if (typeof loopback_id === "string") {
+        await publisher.xAdd("backend", "*", {
+          response: JSON.stringify({
+            loopback_id,
+            ...engine_response,
+          }),
+        });
+      }
       await client.xAck("engine", "engine-group", message.id);
     }
   }
