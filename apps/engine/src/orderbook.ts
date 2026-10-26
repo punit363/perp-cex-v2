@@ -33,6 +33,13 @@ class Orderbook {
     return a < b ? -1 : a > b ? 1 : 0;
   }
 
+  private remainingOrderMargin(node: OrderNode): bigint {
+    return calculateInitialMargin(
+      calculateNotional(node.level.price, node.quantity - node.filled),
+      node.leverage
+    );
+  }
+
   private updateMarketData(fills: Fill[]) {
     if (fills.length > 0) {
       const lastFill = fills[fills.length - 1];
@@ -239,10 +246,13 @@ class Orderbook {
 
           const rem_odr_qty = odr_quantity - odr_filled;
           const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
+          const margin_before = this.remainingOrderMargin(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
+          const maker_order_margin_consumed =
+            margin_before - this.remainingOrderMargin(current_node);
 
           const fill: Fill = {
             trade_id: generate_trade_id(),
@@ -252,6 +262,7 @@ class Orderbook {
             taker_user_id: order.user_id,
             price,
             maker_leverage: current_node.leverage,
+            maker_order_margin_consumed,
             filled: fill_qty,
           };
           fills.push(fill);
@@ -312,10 +323,13 @@ class Orderbook {
 
           const rem_odr_qty = odr_quantity - odr_filled;
           const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
+          const margin_before = this.remainingOrderMargin(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
+          const maker_order_margin_consumed =
+            margin_before - this.remainingOrderMargin(current_node);
 
           const fill: Fill = {
             trade_id: generate_trade_id(),
@@ -324,6 +338,7 @@ class Orderbook {
             taker_order_id: order.order_id,
             taker_user_id: order.user_id,
             maker_leverage: current_node.leverage,
+            maker_order_margin_consumed,
             price,
             filled: fill_qty,
           };

@@ -307,12 +307,13 @@ class Engine {
           maker_acc?.positions.set(market_id, maker_position);
         }
 
+        let maker_position_margin_added = 0n;
         if (maker_position.type != order_position_type) {
           const margin_reserved = calculateInitialMargin(
             calculateNotional(fill.price, fill.filled),
             fill.maker_leverage
           );
-          this.accounts.reserveMargin(maker_acc.user_id, margin_reserved);
+          maker_position_margin_added = margin_reserved;
           maker_position.reserved_margin += margin_reserved;
           maker_position.avg_entry_price = calcAvgPrice(
             maker_position.avg_entry_price,
@@ -369,7 +370,7 @@ class Engine {
                 calculateNotional(fill.price, rem_qty),
                 fill.maker_leverage
               );
-              this.accounts.reserveMargin(maker_acc.user_id, margin_reserved);
+              maker_position_margin_added = margin_reserved;
               maker_position.reserved_margin += margin_reserved;
 
               maker_position.avg_entry_price = calcAvgPrice(
@@ -415,6 +416,11 @@ class Engine {
             this.accounts.credit(maker_acc.user_id, realizedPnl);
           }
         }
+        this.settleFilledOrderMargin(
+          maker_acc.user_id,
+          fill.maker_order_margin_consumed,
+          maker_position_margin_added
+        );
       }
     }
     const response = {
@@ -427,6 +433,7 @@ class Engine {
           price,
           filled,
           maker_leverage,
+          maker_order_margin_consumed,
           ...fill
         } = fill_item;
 
