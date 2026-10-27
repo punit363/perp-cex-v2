@@ -1,5 +1,5 @@
 import { divideRounded, formatFixed } from "./math/fixed-point";
-import type { Fill } from "./types";
+import type { Fill, Position } from "./types";
 import { engine_response } from "./utils";
 import type { EngineCommand } from "./zod/z";
 import Orderbook from "./orderbook";
@@ -184,6 +184,7 @@ class Engine {
         order.side == OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
       let taker_remaining = quantity - order.filled;
 
+      //========Update Positions===========
       for (const fill of result.fills) {
         const taker_margin_before = calculateInitialMargin(
           calculateNotional(price, taker_remaining),
@@ -198,7 +199,7 @@ class Engine {
           );
         let taker_position_margin_added = 0n;
 
-        //update taker position
+        //========Update Taker Position===========
         let taker_position = taker_acc.positions.get(market_id);
 
         if (!taker_position) {
@@ -214,7 +215,9 @@ class Engine {
           taker_acc?.positions.set(market_id, taker_position);
           this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
         }
-        if (order_position_type == taker_position.type) {
+
+        //========Taker Position and Current Order are same side===========
+        if (taker_position.type == order_position_type) {
           const margin_reserved = calculateInitialMargin(
             calculateNotional(fill.price, fill.filled),
             leverage
@@ -228,16 +231,24 @@ class Engine {
             fill.filled
           );
           taker_position.quantity += fill.filled;
-          //TODO: where does current_market_price come from?
-          taker_position.unrealized_pnl = calcUnrealisedPnL(
-            order_position_type,
+          // taker_position.unrealized_pnl = calcUnrealisedPnL(
+          //   order_position_type,
+          //   mark_price,
+          //   taker_position.avg_entry_price,
+          //   taker_position.quantity
+          // );
+
+          this.liquidationCheck(
+            fill.taker_user_id,
+            market_id,
             mark_price,
-            taker_position.avg_entry_price,
-            taker_position.quantity
+            taker_position
           );
+
+          //========Taker Position and Current Order are opposite side===========
         } else {
           if (taker_position.quantity <= fill.filled) {
-            //Incase the previous position cancels out
+            //========Incase the previous position cancels out===========
             const rem_qty = fill.filled - taker_position.quantity;
 
             //release the prev margin + realise the PnL
@@ -260,6 +271,7 @@ class Engine {
               .get(market_id)
               ?.delete(taker_acc.user_id);
 
+            //========Incase the previous position cancels out and a opposite position is created===========
             if (taker_position.quantity < fill.filled) {
               //create new
               taker_position = {
@@ -287,17 +299,24 @@ class Engine {
               );
               taker_position.quantity += rem_qty;
               //TODO: where does current_market_price come from?
-              taker_position.unrealized_pnl = calcUnrealisedPnL(
-                order_position_type,
-                mark_price,
-                taker_position.avg_entry_price,
-                rem_qty
-              );
+              // taker_position.unrealized_pnl = calcUnrealisedPnL(
+              //   order_position_type,
+              //   mark_price,
+              //   taker_position.avg_entry_price,
+              //   rem_qty
+              // );
 
               taker_acc.positions.set(market_id, taker_position);
               this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
+              this.liquidationCheck(
+                fill.taker_user_id,
+                market_id,
+                mark_price,
+                taker_position
+              );
             }
           } else {
+            //========Incase the previous position donot cancels out but reduces===========
             const margin_released = divideRounded(
               taker_position.reserved_margin * fill.filled,
               taker_position.quantity,
@@ -312,11 +331,18 @@ class Engine {
 
             taker_position.reserved_margin -= margin_released;
             taker_position.quantity -= fill.filled;
-            taker_position.unrealized_pnl = calcUnrealisedPnL(
-              taker_position.type,
+            // taker_position.unrealized_pnl = calcUnrealisedPnL(
+            //   taker_position.type,
+            //   mark_price,
+            //   taker_position.avg_entry_price,
+            //   taker_position.quantity
+            // );
+
+            this.liquidationCheck(
+              fill.taker_user_id,
+              market_id,
               mark_price,
-              taker_position.avg_entry_price,
-              taker_position.quantity
+              taker_position
             );
 
             this.accounts.releaseMargin(taker_acc.user_id, margin_released);
@@ -330,7 +356,7 @@ class Engine {
           taker_position_margin_added
         );
 
-        //update maker position
+        //========Update Maker Position===========
         let maker_acc = this.accounts.get(fill.maker_user_id);
         if (!maker_acc) {
           throw new Error("Maker account not registered");
@@ -355,6 +381,7 @@ class Engine {
         }
 
         let maker_position_margin_added = 0n;
+        //========Taker Position and Current Order are same side===========
         if (maker_position.type != order_position_type) {
           const margin_reserved = calculateInitialMargin(
             calculateNotional(fill.price, fill.filled),
@@ -369,16 +396,22 @@ class Engine {
             fill.filled
           );
           maker_position.quantity += fill.filled;
-          //TODO: where does current_market_price come from?
-          maker_position.unrealized_pnl = calcUnrealisedPnL(
-            maker_position.type,
+          // maker_position.unrealized_pnl = calcUnrealisedPnL(
+          //   maker_position.type,
+          //   mark_price,
+          //   maker_position.avg_entry_price,
+          //   maker_position.quantity
+          // );
+          this.liquidationCheck(
+            fill.maker_user_id,
+            market_id,
             mark_price,
-            maker_position.avg_entry_price,
-            maker_position.quantity
+            maker_position
           );
+          //========Maker Position and Current Order are opposite side===========
         } else {
           if (maker_position.quantity <= fill.filled) {
-            //Incase the previous position cancels out
+            //========Incase the previous position cancels out===========
             const rem_qty = fill.filled - maker_position.quantity;
 
             //release the prev margin + realise the PnL
@@ -397,8 +430,11 @@ class Engine {
 
             //delete the redundant position
             maker_acc.positions.delete(market_id);
-            this.positionUsersByMarket.get(market_id)?.delete(maker_acc.user_id);
+            this.positionUsersByMarket
+              .get(market_id)
+              ?.delete(maker_acc.user_id);
 
+            //========Incase the previous position cancels out and a opposite position is created===========
             if (maker_position.quantity < fill.filled) {
               //create new
               maker_position = {
@@ -428,18 +464,25 @@ class Engine {
                 rem_qty
               );
               maker_position.quantity += rem_qty;
-              //TODO: where does current_market_price come from?
-              maker_position.unrealized_pnl = calcUnrealisedPnL(
-                maker_position.type,
+              // maker_position.unrealized_pnl = calcUnrealisedPnL(
+              //   maker_position.type,
+              //   mark_price,
+              //   maker_position.avg_entry_price,
+              //   rem_qty
+              // );
+
+              this.liquidationCheck(
+                fill.maker_user_id,
+                market_id,
                 mark_price,
-                maker_position.avg_entry_price,
-                rem_qty
+                maker_position
               );
 
               maker_acc.positions.set(market_id, maker_position);
               this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
             }
           } else {
+            //========Incase the previous position donot cancels out but reduces===========
             const margin_released = divideRounded(
               maker_position.reserved_margin * fill.filled,
               maker_position.quantity,
@@ -454,11 +497,17 @@ class Engine {
 
             maker_position.reserved_margin -= margin_released;
             maker_position.quantity -= fill.filled;
-            maker_position.unrealized_pnl = calcUnrealisedPnL(
-              maker_position.type,
+            // maker_position.unrealized_pnl = calcUnrealisedPnL(
+            //   maker_position.type,
+            //   mark_price,
+            //   maker_position.avg_entry_price,
+            //   maker_position.quantity
+            // );
+            this.liquidationCheck(
+              fill.maker_user_id,
+              market_id,
               mark_price,
-              maker_position.avg_entry_price,
-              maker_position.quantity
+              maker_position
             );
 
             this.accounts.releaseMargin(maker_acc.user_id, margin_released);
@@ -558,16 +607,50 @@ class Engine {
     return engine_response("Position fetched successfully", 1, { ...response });
   }
 
+  private liquidationCheck(
+    user_id: string,
+    market_id: string,
+    mark_price: bigint,
+    position: Position
+  ) {
+    position.unrealized_pnl = calcUnrealisedPnL(
+      position.type,
+      mark_price,
+      position.avg_entry_price,
+      position.quantity
+    );
+
+    const position_equity = position.reserved_margin + position.unrealized_pnl;
+    const maintenance_margin_rate = this.MAINTENANCE_MARGIN_RATE;
+
+    const maintenance_requirement = calculateMaintenanceMargin(
+      calculateNotional(mark_price, position.quantity),
+      maintenance_margin_rate
+    );
+
+    if (position_equity <= maintenance_requirement) {
+      //trigger liquidity
+
+      //release the prev margin + realise the PnL
+      this.accounts.releaseMargin(user_id, position.reserved_margin);
+
+      this.accounts.credit(user_id, position.unrealized_pnl);
+
+      //delete the redundant position
+      this.accounts.get(user_id)?.positions.delete(market_id);
+      this.positionUsersByMarket.get(market_id)?.delete(user_id);
+    }
+  }
+
   private markPriceUpdate(
     request: CommandOf<"MARK_PRICE_UPDATE">
   ): EngineResponse {
-    const {
-      market_id,
-      mark_price,
-      source_timestamp,
-      producer_id,
-      sequence,
-    } = request;
+    const { market_id, mark_price, source_timestamp, producer_id, sequence } =
+      request;
+
+    if (mark_price <= 0) {
+      return engine_response("Invalid mark price", 0);
+    }
 
     const parsed_sequence = BigInt(sequence);
     const latest_metadata = this.markPriceMetadata.get(market_id);
@@ -608,27 +691,7 @@ class Engine {
         continue;
       }
 
-      position.unrealized_pnl = calcUnrealisedPnL(
-        position.type,
-        mark_price,
-        position.avg_entry_price,
-        position.quantity
-      );
-
-      const position_equity =
-        position.reserved_margin + position.unrealized_pnl;
-      const maintenance_margin_rate = this.MAINTENANCE_MARGIN_RATE;
-
-      const maintenance_requirement = calculateMaintenanceMargin(
-        calculateNotional(mark_price, position.quantity),
-        maintenance_margin_rate
-      );
-
-      if (position_equity <= maintenance_requirement) {
-        //trigger liquidity
-      }
-      // how to recalibrate margin if no leverage available?
-      // position.reserved_margin = cal
+      this.liquidationCheck(user_id, market_id, mark_price, position);
     }
     return engine_response("Positions recalibrated successfully", 1, null);
   }
