@@ -46,7 +46,6 @@ class Engine {
       new Set(["user-1", "user-2", "user-3"])
     );
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
-    this.markPrices.set("market123", 10000000000n);
   }
 
   processEngineOrder = (request: EngineCommand): EngineResponse => {
@@ -117,6 +116,23 @@ class Engine {
     }
   }
 
+  private requireFreshMarkPrice(market_id: string) {
+    const mark_price = this.markPrices.get(market_id);
+    const mark_price_metadata = this.markPriceMetadata.get(market_id);
+
+    if (
+      !mark_price ||
+      !mark_price_metadata ||
+      mark_price < 0 ||
+      Date.now() - mark_price_metadata?.source_timestamp >
+        this.MAX_MARK_PRICE_AGE_MS
+    ) {
+      throw new Error("Fresh mark price does not exist");
+    }
+
+    return mark_price;
+  }
+
   private placeOrder(request: CommandOf<"PLACE_ORDER">): EngineResponse {
     const { action, market_id, leverage, user_id, price, quantity, ...order } =
       request;
@@ -135,6 +151,12 @@ class Engine {
       throw new Error("Filled quantity must be less than order quantity");
     }
 
+    const mark_price = this.requireFreshMarkPrice(market_id);
+
+    if (!mark_price) {
+      throw new Error("Mark Price not found for this market ID");
+    }
+
     const notional = calculateNotional(price, quantity - order.filled);
     const initial_margin = calculateInitialMargin(notional, leverage);
     if (account.collateral.available < initial_margin) {
@@ -151,11 +173,6 @@ class Engine {
       leverage,
       ...order,
     });
-
-    const mark_price = this.markPrices.get(market_id);
-    if (!mark_price) {
-      throw new Error("Mark Price not found for this market ID");
-    }
 
     if (result.fills.length > 0) {
       let taker_acc = this.accounts.get(user_id);
