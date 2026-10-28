@@ -68,6 +68,7 @@ interface Fill {
   price: bigint;
   maker_leverage: bigint;
   maker_order_margin_consumed: bigint;
+  maker_order_status: OrderStatus;
   filled: bigint;
 }
 

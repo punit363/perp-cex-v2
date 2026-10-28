@@ -1,5 +1,5 @@
 import { divideRounded, formatFixed } from "./math/fixed-point";
-import type { Fill, Position } from "./types";
+import type { Fill } from "./types";
 import { engine_response } from "./utils";
 import type { EngineCommand } from "./zod/z";
 import Orderbook from "./orderbook";
@@ -11,7 +11,12 @@ import {
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
-import { OrderSide, PositionType } from "commons/src/order.type";
+import {
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  PositionType,
+} from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
 
@@ -174,6 +179,15 @@ class Engine {
       ...order,
     });
 
+    if (
+      result.order.status == OrderStatus.OPEN ||
+      result.order.status == OrderStatus.PARTIALLY_FILLED
+    ) {
+      account.orders.add(result.order.order_id);
+    } else if (result.order.status === OrderStatus.FILLED) {
+      account.orders.delete(result.order.order_id);
+    }
+
     if (result.fills.length > 0) {
       let taker_acc = this.accounts.get(user_id);
       if (!taker_acc) {
@@ -184,8 +198,9 @@ class Engine {
         order.side == OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
       let taker_remaining = quantity - order.filled;
 
-      //========Update Positions===========
+      const liquidation_risks = new Set<string>();
       for (const fill of result.fills) {
+        //========Update Positions===========
         const taker_margin_before = calculateInitialMargin(
           calculateNotional(price, taker_remaining),
           leverage
@@ -238,12 +253,7 @@ class Engine {
           //   taker_position.quantity
           // );
 
-          this.liquidationCheck(
-            fill.taker_user_id,
-            market_id,
-            mark_price,
-            taker_position
-          );
+          liquidation_risks.add(fill.taker_user_id);
 
           //========Taker Position and Current Order are opposite side===========
         } else {
@@ -308,12 +318,7 @@ class Engine {
 
               taker_acc.positions.set(market_id, taker_position);
               this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
-              this.liquidationCheck(
-                fill.taker_user_id,
-                market_id,
-                mark_price,
-                taker_position
-              );
+              liquidation_risks.add(fill.taker_user_id);
             }
           } else {
             //========Incase the previous position donot cancels out but reduces===========
@@ -338,12 +343,7 @@ class Engine {
             //   taker_position.quantity
             // );
 
-            this.liquidationCheck(
-              fill.taker_user_id,
-              market_id,
-              mark_price,
-              taker_position
-            );
+            liquidation_risks.add(fill.taker_user_id);
 
             this.accounts.releaseMargin(taker_acc.user_id, margin_released);
             this.accounts.credit(taker_acc.user_id, realizedPnl);
@@ -362,6 +362,11 @@ class Engine {
           throw new Error("Maker account not registered");
         }
         let maker_position = maker_acc.positions.get(market_id);
+
+        //===========Delete orders from User Accounts================
+        if (fill.maker_order_status === OrderStatus.FILLED) {
+          maker_acc.orders.delete(fill.maker_order_id);
+        }
 
         if (!maker_position) {
           maker_position = {
@@ -402,12 +407,7 @@ class Engine {
           //   maker_position.avg_entry_price,
           //   maker_position.quantity
           // );
-          this.liquidationCheck(
-            fill.maker_user_id,
-            market_id,
-            mark_price,
-            maker_position
-          );
+          liquidation_risks.add(fill.maker_user_id);
           //========Maker Position and Current Order are opposite side===========
         } else {
           if (maker_position.quantity <= fill.filled) {
@@ -471,12 +471,7 @@ class Engine {
               //   rem_qty
               // );
 
-              this.liquidationCheck(
-                fill.maker_user_id,
-                market_id,
-                mark_price,
-                maker_position
-              );
+              liquidation_risks.add(fill.maker_user_id);
 
               maker_acc.positions.set(market_id, maker_position);
               this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
@@ -503,12 +498,7 @@ class Engine {
             //   maker_position.avg_entry_price,
             //   maker_position.quantity
             // );
-            this.liquidationCheck(
-              fill.maker_user_id,
-              market_id,
-              mark_price,
-              maker_position
-            );
+            liquidation_risks.add(fill.maker_user_id);
 
             this.accounts.releaseMargin(maker_acc.user_id, margin_released);
             this.accounts.credit(maker_acc.user_id, realizedPnl);
@@ -519,6 +509,10 @@ class Engine {
           fill.maker_order_margin_consumed,
           maker_position_margin_added
         );
+      }
+
+      for (const affected_user_id of liquidation_risks) {
+        this.liquidationCheck({ user_id: affected_user_id, market_id });
       }
     }
     const response = {
@@ -564,6 +558,7 @@ class Engine {
     const notional = calculateNotional(price, rem_qty);
     const initial_margin = calculateInitialMargin(notional, leverage);
     this.accounts.releaseMargin(request.user_id, initial_margin);
+    this.accounts.get(cancel_request.user_id)?.orders.delete(order_id);
 
     return engine_response("Order cancelled successfully", 1, {
       order_id,
@@ -607,12 +602,17 @@ class Engine {
     return engine_response("Position fetched successfully", 1, { ...response });
   }
 
-  private liquidationCheck(
-    user_id: string,
-    market_id: string,
-    mark_price: bigint,
-    position: Position
-  ) {
+  private liquidationCheck({
+    user_id,
+    market_id,
+  }: {
+    user_id: string;
+    market_id: string;
+  }) {
+    const position = this.accounts.get(user_id)?.positions.get(market_id);
+    if (!position) return;
+
+    const mark_price = this.requireFreshMarkPrice(market_id);
     position.unrealized_pnl = calcUnrealisedPnL(
       position.type,
       mark_price,
@@ -631,14 +631,46 @@ class Engine {
     if (position_equity <= maintenance_requirement) {
       //trigger liquidity
 
-      //release the prev margin + realise the PnL
-      this.accounts.releaseMargin(user_id, position.reserved_margin);
+      //cancel all open orders
+      this.accounts.get(user_id)?.orders.forEach((order_id: string) => {
+        this.cancelOrder({
+          action: "CANCEL_ORDER",
+          user_id,
+          order_id,
+          market_id,
+        });
+      });
 
-      this.accounts.credit(user_id, position.unrealized_pnl);
+      this.accounts.get(user_id)?.orders.clear();
+
+      const order_id = "odr_" + Math.random().toString();
+
+      const side =
+        position.type == PositionType.LONG ? OrderSide.SELL : OrderSide.BUY;
+
+      //TODO: Uncomment after market order is implemented
+      // this.placeOrder({
+      //   action: "PLACE_ORDER",
+      //   user_id,
+      //   market_id,
+      //   order_id,
+      //   price: 0n,
+      //   quantity: position.quantity,
+      //   leverage: 1n,
+      //   filled: 0n,
+      //   type: OrderType.MARKET,
+      //   status: OrderStatus.OPEN,
+      //   side,
+      // });
+
+      //release the prev margin + realise the PnL
+      // this.accounts.releaseMargin(user_id, position.reserved_margin);
+
+      // this.accounts.credit(user_id, position.unrealized_pnl);
 
       //delete the redundant position
-      this.accounts.get(user_id)?.positions.delete(market_id);
-      this.positionUsersByMarket.get(market_id)?.delete(user_id);
+      // this.accounts.get(user_id)?.positions.delete(market_id);
+      // this.positionUsersByMarket.get(market_id)?.delete(user_id);
     }
   }
 
@@ -685,13 +717,7 @@ class Engine {
     }
 
     for (const user_id of users_with_position) {
-      const position = this.accounts.get(user_id)?.positions.get(market_id);
-
-      if (!position) {
-        continue;
-      }
-
-      this.liquidationCheck(user_id, market_id, mark_price, position);
+      this.liquidationCheck({ user_id, market_id });
     }
     return engine_response("Positions recalibrated successfully", 1, null);
   }

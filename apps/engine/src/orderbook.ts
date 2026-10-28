@@ -254,6 +254,14 @@ class Orderbook {
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
 
+          let maker_order_status = OrderStatus.OPEN;
+          if (quantity == current_node.filled) {
+            maker_order_status = OrderStatus.FILLED;
+            this.removeOrder(current_node);
+          } else if (current_node.filled > 0) {
+            maker_order_status = OrderStatus.PARTIALLY_FILLED;
+          }
+
           const fill: Fill = {
             trade_id: generate_trade_id(),
             maker_order_id: order_id,
@@ -263,13 +271,11 @@ class Orderbook {
             price,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_status,
             filled: fill_qty,
           };
           fills.push(fill);
 
-          if (quantity == current_node.filled) {
-            this.removeOrder(current_node);
-          }
           current_node = next;
         }
         if (level.remaining_qty == 0n) {
@@ -330,6 +336,13 @@ class Orderbook {
           level.remaining_qty -= fill_qty;
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          let maker_order_status = OrderStatus.OPEN;
+          if (quantity == current_node.filled) {
+            maker_order_status = OrderStatus.FILLED;
+            this.removeOrder(current_node);
+          } else if (current_node.filled > 0) {
+            maker_order_status = OrderStatus.PARTIALLY_FILLED;
+          }
 
           const fill: Fill = {
             trade_id: generate_trade_id(),
@@ -340,13 +353,11 @@ class Orderbook {
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
             price,
+            maker_order_status,
             filled: fill_qty,
           };
           fills.push(fill);
 
-          if (quantity == current_node.filled) {
-            this.removeOrder(current_node);
-          }
           current_node = next;
         }
         if (level.remaining_qty == 0n) {
