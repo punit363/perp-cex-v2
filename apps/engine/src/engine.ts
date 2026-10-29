@@ -139,205 +139,161 @@ class Engine {
   }
 
   private placeOrder(request: CommandOf<"PLACE_ORDER">): EngineResponse {
-    const { action, market_id, leverage, user_id, price, quantity, ...order } =
-      request;
+    try {
+      const {
+        action,
+        market_id,
+        leverage,
+        user_id,
+        price,
+        quantity,
+        ...order
+      } = request;
 
-    const orderbook = this.orderbooks.get(market_id);
-    if (!orderbook) {
-      throw new Error("Incorrect Market ID");
-    }
-
-    const account = this.accounts.get(user_id);
-    if (!account) {
-      return engine_response("User Account does not exist", 0);
-    }
-
-    if (order.filled < 0n || order.filled >= quantity) {
-      throw new Error("Filled quantity must be less than order quantity");
-    }
-
-    const mark_price = this.requireFreshMarkPrice(market_id);
-
-    if (!mark_price) {
-      throw new Error("Mark Price not found for this market ID");
-    }
-
-    const notional = calculateNotional(price, quantity - order.filled);
-    const initial_margin = calculateInitialMargin(notional, leverage);
-    if (account.collateral.available < initial_margin) {
-      throw new Error("Insufficient funds");
-    }
-
-    this.accounts.reserveMargin(user_id, initial_margin);
-
-    const result = orderbook.place_order({
-      user_id,
-      market_id,
-      price,
-      quantity,
-      leverage,
-      ...order,
-    });
-
-    if (
-      result.order.status == OrderStatus.OPEN ||
-      result.order.status == OrderStatus.PARTIALLY_FILLED
-    ) {
-      account.orders.add(result.order.order_id);
-    } else if (result.order.status === OrderStatus.FILLED) {
-      account.orders.delete(result.order.order_id);
-    }
-
-    if (result.fills.length > 0) {
-      let taker_acc = this.accounts.get(user_id);
-      if (!taker_acc) {
-        throw new Error("Taker account not registered");
+      const orderbook = this.orderbooks.get(market_id);
+      if (!orderbook) {
+        throw new Error("Incorrect Market ID");
       }
 
-      const order_position_type =
-        order.side == OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
-      let taker_remaining = quantity - order.filled;
+      const account = this.accounts.get(user_id);
+      if (!account) {
+        return engine_response("User Account does not exist", 0);
+      }
 
-      const liquidation_risks = new Set<string>();
-      for (const fill of result.fills) {
-        //========Update Positions===========
-        const taker_margin_before = calculateInitialMargin(
-          calculateNotional(price, taker_remaining),
-          leverage
-        );
-        taker_remaining -= fill.filled;
-        const taker_order_margin_consumed =
-          taker_margin_before -
-          calculateInitialMargin(
+      if (order.filled < 0n || order.filled >= quantity) {
+        throw new Error("Filled quantity must be less than order quantity");
+      }
+
+      const mark_price = this.requireFreshMarkPrice(market_id);
+
+      if (!mark_price) {
+        throw new Error("Mark Price not found for this market ID");
+      }
+
+      const notional = calculateNotional(price, quantity - order.filled);
+      let initial_margin = calculateInitialMargin(notional, leverage);
+      if (order.type === OrderType.MARKET) {
+        const current_position = account.positions.get(market_id);
+        let position_type = current_position?.type;
+        let position_quantity = current_position?.quantity ?? 0n;
+        const order_position_type =
+          order.side === OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
+        initial_margin = 0n;
+
+        for (const preview_fill of orderbook.previewMarketOrder({
+          user_id,
+          market_id,
+          price,
+          quantity,
+          leverage,
+          ...order,
+        })) {
+          let opening_qty = preview_fill.quantity;
+          if (position_type && position_type !== order_position_type) {
+            const closing_qty =
+              position_quantity < opening_qty ? position_quantity : opening_qty;
+            position_quantity -= closing_qty;
+            opening_qty -= closing_qty;
+            if (position_quantity === 0n) position_type = undefined;
+          }
+
+          if (opening_qty > 0n) {
+            initial_margin += calculateInitialMargin(
+              calculateNotional(preview_fill.price, opening_qty),
+              leverage
+            );
+            position_type = order_position_type;
+            position_quantity += opening_qty;
+          }
+        }
+      }
+      if (account.collateral.available < initial_margin) {
+        throw new Error("Insufficient funds");
+      }
+
+      this.accounts.reserveMargin(user_id, initial_margin);
+
+      const result = orderbook.placeOrder({
+        user_id,
+        market_id,
+        price,
+        quantity,
+        leverage,
+        ...order,
+      });
+
+      if (order.type == OrderType.LIMIT) {
+        if (
+          result.order.status == OrderStatus.OPEN ||
+          result.order.status == OrderStatus.PARTIALLY_FILLED
+        ) {
+          account.orders.add(result.order.order_id);
+        } else if (result.order.status === OrderStatus.FILLED) {
+          account.orders.delete(result.order.order_id);
+        }
+      }
+
+      if (result.fills.length > 0) {
+        let taker_acc = this.accounts.get(user_id);
+        if (!taker_acc) {
+          throw new Error("Taker account not registered");
+        }
+
+        const order_position_type =
+          order.side == OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
+        let taker_remaining = quantity - order.filled;
+
+        const liquidation_risks = new Set<string>();
+        let market_position_margin_added = 0n;
+        for (const fill of result.fills) {
+          //========Update Positions===========
+          const taker_margin_before = calculateInitialMargin(
             calculateNotional(price, taker_remaining),
             leverage
           );
-        let taker_position_margin_added = 0n;
-
-        //========Update Taker Position===========
-        let taker_position = taker_acc.positions.get(market_id);
-
-        if (!taker_position) {
-          taker_position = {
-            market_id,
-            type: order_position_type,
-            quantity: 0n,
-            reserved_margin: 0n,
-            unrealized_pnl: 0n,
-            avg_entry_price: 0n,
-            funding_accrued: 0n,
-          };
-          taker_acc?.positions.set(market_id, taker_position);
-          this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
-        }
-
-        //========Taker Position and Current Order are same side===========
-        if (taker_position.type == order_position_type) {
-          const margin_reserved = calculateInitialMargin(
-            calculateNotional(fill.price, fill.filled),
-            leverage
-          );
-          taker_position_margin_added = margin_reserved;
-          taker_position.reserved_margin += margin_reserved;
-          taker_position.avg_entry_price = calcAvgPrice(
-            taker_position.avg_entry_price,
-            taker_position.quantity,
-            fill.price,
-            fill.filled
-          );
-          taker_position.quantity += fill.filled;
-          // taker_position.unrealized_pnl = calcUnrealisedPnL(
-          //   order_position_type,
-          //   mark_price,
-          //   taker_position.avg_entry_price,
-          //   taker_position.quantity
-          // );
-
-          liquidation_risks.add(fill.taker_user_id);
-
-          //========Taker Position and Current Order are opposite side===========
-        } else {
-          if (taker_position.quantity <= fill.filled) {
-            //========Incase the previous position cancels out===========
-            const rem_qty = fill.filled - taker_position.quantity;
-
-            //release the prev margin + realise the PnL
-            this.accounts.releaseMargin(
-              taker_acc.user_id,
-              taker_position.reserved_margin
+          taker_remaining -= fill.filled;
+          const taker_order_margin_consumed =
+            taker_margin_before -
+            calculateInitialMargin(
+              calculateNotional(price, taker_remaining),
+              leverage
             );
+          let taker_position_margin_added = 0n;
 
-            const realizedPnl = calcUnrealisedPnL(
-              taker_position.type,
-              fill.price,
+          //========Update Taker Position===========
+          let taker_position = taker_acc.positions.get(market_id);
+
+          if (!taker_position) {
+            taker_position = {
+              market_id,
+              type: order_position_type,
+              quantity: 0n,
+              reserved_margin: 0n,
+              unrealized_pnl: 0n,
+              avg_entry_price: 0n,
+              funding_accrued: 0n,
+            };
+            taker_acc?.positions.set(market_id, taker_position);
+            this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
+          }
+
+          //========Taker Position and Current Order are same side===========
+          if (taker_position.type == order_position_type) {
+            const margin_reserved = calculateInitialMargin(
+              calculateNotional(fill.price, fill.filled),
+              leverage
+            );
+            taker_position_margin_added = margin_reserved;
+            taker_position.reserved_margin += margin_reserved;
+            taker_position.avg_entry_price = calcAvgPrice(
               taker_position.avg_entry_price,
-              taker_position.quantity // full close
-            );
-            this.accounts.credit(taker_acc.user_id, realizedPnl);
-
-            //delete the redundant position
-            taker_acc.positions.delete(market_id);
-            this.positionUsersByMarket
-              .get(market_id)
-              ?.delete(taker_acc.user_id);
-
-            //========Incase the previous position cancels out and a opposite position is created===========
-            if (taker_position.quantity < fill.filled) {
-              //create new
-              taker_position = {
-                market_id,
-                type: order_position_type,
-                quantity: 0n,
-                reserved_margin: 0n,
-                unrealized_pnl: 0n,
-                avg_entry_price: 0n,
-                funding_accrued: 0n,
-              };
-
-              const margin_reserved = calculateInitialMargin(
-                calculateNotional(fill.price, rem_qty),
-                leverage
-              );
-              taker_position_margin_added = margin_reserved;
-              taker_position.reserved_margin += margin_reserved;
-
-              taker_position.avg_entry_price = calcAvgPrice(
-                taker_position.avg_entry_price,
-                taker_position.quantity,
-                fill.price,
-                rem_qty
-              );
-              taker_position.quantity += rem_qty;
-              //TODO: where does current_market_price come from?
-              // taker_position.unrealized_pnl = calcUnrealisedPnL(
-              //   order_position_type,
-              //   mark_price,
-              //   taker_position.avg_entry_price,
-              //   rem_qty
-              // );
-
-              taker_acc.positions.set(market_id, taker_position);
-              this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
-              liquidation_risks.add(fill.taker_user_id);
-            }
-          } else {
-            //========Incase the previous position donot cancels out but reduces===========
-            const margin_released = divideRounded(
-              taker_position.reserved_margin * fill.filled,
               taker_position.quantity,
-              "floor"
-            );
-            const realizedPnl = calcUnrealisedPnL(
-              taker_position.type,
               fill.price,
-              taker_position.avg_entry_price,
               fill.filled
             );
-
-            taker_position.reserved_margin -= margin_released;
-            taker_position.quantity -= fill.filled;
+            taker_position.quantity += fill.filled;
             // taker_position.unrealized_pnl = calcUnrealisedPnL(
-            //   taker_position.type,
+            //   order_position_type,
             //   mark_price,
             //   taker_position.avg_entry_price,
             //   taker_position.quantity
@@ -345,153 +301,158 @@ class Engine {
 
             liquidation_risks.add(fill.taker_user_id);
 
-            this.accounts.releaseMargin(taker_acc.user_id, margin_released);
-            this.accounts.credit(taker_acc.user_id, realizedPnl);
-          }
-        }
+            //========Taker Position and Current Order are opposite side===========
+          } else {
+            if (taker_position.quantity <= fill.filled) {
+              //========Incase the previous position cancels out===========
+              const rem_qty = fill.filled - taker_position.quantity;
 
-        this.settleFilledOrderMargin(
-          taker_acc.user_id,
-          taker_order_margin_consumed,
-          taker_position_margin_added
-        );
-
-        //========Update Maker Position===========
-        let maker_acc = this.accounts.get(fill.maker_user_id);
-        if (!maker_acc) {
-          throw new Error("Maker account not registered");
-        }
-        let maker_position = maker_acc.positions.get(market_id);
-
-        //===========Delete orders from User Accounts================
-        if (fill.maker_order_status === OrderStatus.FILLED) {
-          maker_acc.orders.delete(fill.maker_order_id);
-        }
-
-        if (!maker_position) {
-          maker_position = {
-            market_id,
-            type:
-              order_position_type == PositionType.LONG
-                ? PositionType.SHORT
-                : PositionType.LONG,
-            quantity: 0n,
-            reserved_margin: 0n,
-            unrealized_pnl: 0n,
-            avg_entry_price: 0n,
-            funding_accrued: 0n,
-          };
-          maker_acc?.positions.set(market_id, maker_position);
-          this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
-        }
-
-        let maker_position_margin_added = 0n;
-        //========Taker Position and Current Order are same side===========
-        if (maker_position.type != order_position_type) {
-          const margin_reserved = calculateInitialMargin(
-            calculateNotional(fill.price, fill.filled),
-            fill.maker_leverage
-          );
-          maker_position_margin_added = margin_reserved;
-          maker_position.reserved_margin += margin_reserved;
-          maker_position.avg_entry_price = calcAvgPrice(
-            maker_position.avg_entry_price,
-            maker_position.quantity,
-            fill.price,
-            fill.filled
-          );
-          maker_position.quantity += fill.filled;
-          // maker_position.unrealized_pnl = calcUnrealisedPnL(
-          //   maker_position.type,
-          //   mark_price,
-          //   maker_position.avg_entry_price,
-          //   maker_position.quantity
-          // );
-          liquidation_risks.add(fill.maker_user_id);
-          //========Maker Position and Current Order are opposite side===========
-        } else {
-          if (maker_position.quantity <= fill.filled) {
-            //========Incase the previous position cancels out===========
-            const rem_qty = fill.filled - maker_position.quantity;
-
-            //release the prev margin + realise the PnL
-            this.accounts.releaseMargin(
-              maker_acc.user_id,
-              maker_position.reserved_margin
-            );
-
-            const realizedPnl = calcUnrealisedPnL(
-              maker_position.type,
-              fill.price,
-              maker_position.avg_entry_price,
-              maker_position.quantity // full close
-            );
-            this.accounts.credit(maker_acc.user_id, realizedPnl);
-
-            //delete the redundant position
-            maker_acc.positions.delete(market_id);
-            this.positionUsersByMarket
-              .get(market_id)
-              ?.delete(maker_acc.user_id);
-
-            //========Incase the previous position cancels out and a opposite position is created===========
-            if (maker_position.quantity < fill.filled) {
-              //create new
-              maker_position = {
-                market_id,
-                type:
-                  order_position_type == PositionType.LONG
-                    ? PositionType.SHORT
-                    : PositionType.LONG,
-                quantity: 0n,
-                reserved_margin: 0n,
-                unrealized_pnl: 0n,
-                avg_entry_price: 0n,
-                funding_accrued: 0n,
-              };
-
-              const margin_reserved = calculateInitialMargin(
-                calculateNotional(fill.price, rem_qty),
-                fill.maker_leverage
+              //release the prev margin + realise the PnL
+              this.accounts.releaseMargin(
+                taker_acc.user_id,
+                taker_position.reserved_margin
               );
-              maker_position_margin_added = margin_reserved;
-              maker_position.reserved_margin += margin_reserved;
 
-              maker_position.avg_entry_price = calcAvgPrice(
-                maker_position.avg_entry_price,
-                maker_position.quantity,
+              const realizedPnl = calcUnrealisedPnL(
+                taker_position.type,
                 fill.price,
-                rem_qty
+                taker_position.avg_entry_price,
+                taker_position.quantity // full close
               );
-              maker_position.quantity += rem_qty;
-              // maker_position.unrealized_pnl = calcUnrealisedPnL(
-              //   maker_position.type,
+              this.accounts.credit(taker_acc.user_id, realizedPnl);
+
+              //delete the redundant position
+              taker_acc.positions.delete(market_id);
+              this.positionUsersByMarket
+                .get(market_id)
+                ?.delete(taker_acc.user_id);
+
+              //========Incase the previous position cancels out and a opposite position is created===========
+              if (taker_position.quantity < fill.filled) {
+                //create new
+                taker_position = {
+                  market_id,
+                  type: order_position_type,
+                  quantity: 0n,
+                  reserved_margin: 0n,
+                  unrealized_pnl: 0n,
+                  avg_entry_price: 0n,
+                  funding_accrued: 0n,
+                };
+
+                const margin_reserved = calculateInitialMargin(
+                  calculateNotional(fill.price, rem_qty),
+                  leverage
+                );
+                taker_position_margin_added = margin_reserved;
+                taker_position.reserved_margin += margin_reserved;
+
+                taker_position.avg_entry_price = calcAvgPrice(
+                  taker_position.avg_entry_price,
+                  taker_position.quantity,
+                  fill.price,
+                  rem_qty
+                );
+                taker_position.quantity += rem_qty;
+                //TODO: where does current_market_price come from?
+                // taker_position.unrealized_pnl = calcUnrealisedPnL(
+                //   order_position_type,
+                //   mark_price,
+                //   taker_position.avg_entry_price,
+                //   rem_qty
+                // );
+
+                taker_acc.positions.set(market_id, taker_position);
+                this.positionUsersByMarket
+                  .get(market_id)
+                  ?.add(taker_acc.user_id);
+                liquidation_risks.add(fill.taker_user_id);
+              }
+            } else {
+              //========Incase the previous position donot cancels out but reduces===========
+              const margin_released = divideRounded(
+                taker_position.reserved_margin * fill.filled,
+                taker_position.quantity,
+                "floor"
+              );
+              const realizedPnl = calcUnrealisedPnL(
+                taker_position.type,
+                fill.price,
+                taker_position.avg_entry_price,
+                fill.filled
+              );
+
+              taker_position.reserved_margin -= margin_released;
+              taker_position.quantity -= fill.filled;
+              // taker_position.unrealized_pnl = calcUnrealisedPnL(
+              //   taker_position.type,
               //   mark_price,
-              //   maker_position.avg_entry_price,
-              //   rem_qty
+              //   taker_position.avg_entry_price,
+              //   taker_position.quantity
               // );
 
-              liquidation_risks.add(fill.maker_user_id);
+              liquidation_risks.add(fill.taker_user_id);
 
-              maker_acc.positions.set(market_id, maker_position);
-              this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
+              this.accounts.releaseMargin(taker_acc.user_id, margin_released);
+              this.accounts.credit(taker_acc.user_id, realizedPnl);
             }
+          }
+
+          if (order.type === OrderType.MARKET) {
+            market_position_margin_added += taker_position_margin_added;
           } else {
-            //========Incase the previous position donot cancels out but reduces===========
-            const margin_released = divideRounded(
-              maker_position.reserved_margin * fill.filled,
-              maker_position.quantity,
-              "floor"
+            this.settleFilledOrderMargin(
+              taker_acc.user_id,
+              taker_order_margin_consumed,
+              taker_position_margin_added
             );
-            const realizedPnl = calcUnrealisedPnL(
-              maker_position.type,
-              fill.price,
+          }
+
+          //========Update Maker Position===========
+          let maker_acc = this.accounts.get(fill.maker_user_id);
+          if (!maker_acc) {
+            throw new Error("Maker account not registered");
+          }
+          let maker_position = maker_acc.positions.get(market_id);
+
+          //===========Delete orders from User Accounts================
+          if (fill.maker_order_status === OrderStatus.FILLED) {
+            maker_acc.orders.delete(fill.maker_order_id);
+          }
+
+          if (!maker_position) {
+            maker_position = {
+              market_id,
+              type:
+                order_position_type == PositionType.LONG
+                  ? PositionType.SHORT
+                  : PositionType.LONG,
+              quantity: 0n,
+              reserved_margin: 0n,
+              unrealized_pnl: 0n,
+              avg_entry_price: 0n,
+              funding_accrued: 0n,
+            };
+            maker_acc?.positions.set(market_id, maker_position);
+            this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
+          }
+
+          let maker_position_margin_added = 0n;
+          //========Taker Position and Current Order are same side===========
+          if (maker_position.type != order_position_type) {
+            const margin_reserved = calculateInitialMargin(
+              calculateNotional(fill.price, fill.filled),
+              fill.maker_leverage
+            );
+            maker_position_margin_added = margin_reserved;
+            maker_position.reserved_margin += margin_reserved;
+            maker_position.avg_entry_price = calcAvgPrice(
               maker_position.avg_entry_price,
+              maker_position.quantity,
+              fill.price,
               fill.filled
             );
-
-            maker_position.reserved_margin -= margin_released;
-            maker_position.quantity -= fill.filled;
+            maker_position.quantity += fill.filled;
             // maker_position.unrealized_pnl = calcUnrealisedPnL(
             //   maker_position.type,
             //   mark_price,
@@ -499,47 +460,156 @@ class Engine {
             //   maker_position.quantity
             // );
             liquidation_risks.add(fill.maker_user_id);
+            //========Maker Position and Current Order are opposite side===========
+          } else {
+            if (maker_position.quantity <= fill.filled) {
+              //========Incase the previous position cancels out===========
+              const rem_qty = fill.filled - maker_position.quantity;
 
-            this.accounts.releaseMargin(maker_acc.user_id, margin_released);
-            this.accounts.credit(maker_acc.user_id, realizedPnl);
+              //release the prev margin + realise the PnL
+              this.accounts.releaseMargin(
+                maker_acc.user_id,
+                maker_position.reserved_margin
+              );
+
+              const realizedPnl = calcUnrealisedPnL(
+                maker_position.type,
+                fill.price,
+                maker_position.avg_entry_price,
+                maker_position.quantity // full close
+              );
+              this.accounts.credit(maker_acc.user_id, realizedPnl);
+
+              //delete the redundant position
+              maker_acc.positions.delete(market_id);
+              this.positionUsersByMarket
+                .get(market_id)
+                ?.delete(maker_acc.user_id);
+
+              //========Incase the previous position cancels out and a opposite position is created===========
+              if (maker_position.quantity < fill.filled) {
+                //create new
+                maker_position = {
+                  market_id,
+                  type:
+                    order_position_type == PositionType.LONG
+                      ? PositionType.SHORT
+                      : PositionType.LONG,
+                  quantity: 0n,
+                  reserved_margin: 0n,
+                  unrealized_pnl: 0n,
+                  avg_entry_price: 0n,
+                  funding_accrued: 0n,
+                };
+
+                const margin_reserved = calculateInitialMargin(
+                  calculateNotional(fill.price, rem_qty),
+                  fill.maker_leverage
+                );
+                maker_position_margin_added = margin_reserved;
+                maker_position.reserved_margin += margin_reserved;
+
+                maker_position.avg_entry_price = calcAvgPrice(
+                  maker_position.avg_entry_price,
+                  maker_position.quantity,
+                  fill.price,
+                  rem_qty
+                );
+                maker_position.quantity += rem_qty;
+                // maker_position.unrealized_pnl = calcUnrealisedPnL(
+                //   maker_position.type,
+                //   mark_price,
+                //   maker_position.avg_entry_price,
+                //   rem_qty
+                // );
+
+                liquidation_risks.add(fill.maker_user_id);
+
+                maker_acc.positions.set(market_id, maker_position);
+                this.positionUsersByMarket
+                  .get(market_id)
+                  ?.add(maker_acc.user_id);
+              }
+            } else {
+              //========Incase the previous position donot cancels out but reduces===========
+              const margin_released = divideRounded(
+                maker_position.reserved_margin * fill.filled,
+                maker_position.quantity,
+                "floor"
+              );
+              const realizedPnl = calcUnrealisedPnL(
+                maker_position.type,
+                fill.price,
+                maker_position.avg_entry_price,
+                fill.filled
+              );
+
+              maker_position.reserved_margin -= margin_released;
+              maker_position.quantity -= fill.filled;
+              // maker_position.unrealized_pnl = calcUnrealisedPnL(
+              //   maker_position.type,
+              //   mark_price,
+              //   maker_position.avg_entry_price,
+              //   maker_position.quantity
+              // );
+              liquidation_risks.add(fill.maker_user_id);
+
+              this.accounts.releaseMargin(maker_acc.user_id, margin_released);
+              this.accounts.credit(maker_acc.user_id, realizedPnl);
+            }
           }
+          this.settleFilledOrderMargin(
+            maker_acc.user_id,
+            fill.maker_order_margin_consumed,
+            maker_position_margin_added
+          );
         }
-        this.settleFilledOrderMargin(
-          maker_acc.user_id,
-          fill.maker_order_margin_consumed,
-          maker_position_margin_added
-        );
-      }
 
-      for (const affected_user_id of liquidation_risks) {
-        this.liquidationCheck({ user_id: affected_user_id, market_id });
+        if (
+          order.type === OrderType.MARKET &&
+          initial_margin > market_position_margin_added
+        ) {
+          this.accounts.releaseMargin(
+            user_id,
+            initial_margin - market_position_margin_added
+          );
+        }
+
+        for (const affected_user_id of liquidation_risks) {
+          this.liquidationCheck({ user_id: affected_user_id, market_id });
+        }
       }
+      const response = {
+        order: {
+          ...result.order,
+          filled: formatFixed(result.order.filled),
+          rem_qty: formatFixed(result.order.rem_qty),
+          rem_amt: formatFixed(result.order.rem_amt),
+        },
+        fills: result.fills.map((fill_item: Fill) => {
+          const {
+            price,
+            filled,
+            maker_leverage,
+            maker_order_margin_consumed,
+            ...fill
+          } = fill_item;
+
+          return {
+            ...fill,
+            price: formatFixed(price),
+            filled: formatFixed(filled),
+          };
+        }),
+      };
+
+      // this.accounts.reserveMargin(user_id, initial_margin);
+
+      return engine_response("Order placed successfully", 1, response);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return engine_response(err.message, 0, null);
     }
-    const response = {
-      order: {
-        ...result.order,
-        filled: formatFixed(result.order.filled),
-      },
-      fills: result.fills.map((fill_item: Fill) => {
-        const {
-          price,
-          filled,
-          maker_leverage,
-          maker_order_margin_consumed,
-          ...fill
-        } = fill_item;
-
-        return {
-          ...fill,
-          price: formatFixed(price),
-          filled: formatFixed(filled),
-        };
-      }),
-    };
-
-    // this.accounts.reserveMargin(user_id, initial_margin);
-
-    return engine_response("Order placed successfully", 1, response);
   }
 
   private cancelOrder(request: CommandOf<"CANCEL_ORDER">): EngineResponse {

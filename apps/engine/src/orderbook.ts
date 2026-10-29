@@ -225,7 +225,48 @@ class Orderbook {
     return depth;
   }
 
-  process_sell_order(order: Order) {
+  previewMarketOrder(order: Order): { price: bigint; quantity: bigint }[] {
+    if (order.type !== OrderType.MARKET) {
+      throw new Error("Only market orders can be previewed");
+    }
+
+    const fills: { price: bigint; quantity: bigint }[] = [];
+    let remaining_qty = order.quantity - order.filled;
+    let remaining_amount = order.price;
+    const levels =
+      order.side === OrderSide.BUY
+        ? this.asks.entries()
+        : this.bids.entriesReversed();
+
+    for (const [price, level] of levels) {
+      let node = level.head;
+      while (node && remaining_qty > 0n) {
+        const affordable_qty =
+          order.side === OrderSide.BUY
+            ? divideFixed(remaining_amount, price, "floor")
+            : remaining_qty;
+        if (affordable_qty === 0n) return fills;
+
+        const fill_qty = min(
+          min(remaining_qty, affordable_qty),
+          node.quantity - node.filled
+        );
+        if (fill_qty > 0n) {
+          fills.push({ price, quantity: fill_qty });
+          remaining_qty -= fill_qty;
+          if (order.side === OrderSide.BUY) {
+            remaining_amount -= multiplyFixed(fill_qty, price, "ceil");
+          }
+        }
+        node = node.next;
+      }
+      if (remaining_qty === 0n) break;
+    }
+
+    return fills;
+  }
+
+  processSellOrder(order: Order) {
     const odr_price = order.price;
     const odr_quantity = order.quantity;
     let odr_filled = order.filled;
@@ -367,7 +408,7 @@ class Orderbook {
     };
   }
 
-  process_buy_order(order: Order) {
+  processBuyOrder(order: Order) {
     const odr_price = order.price;
     const odr_quantity = order.quantity;
     let odr_filled = order.filled;
@@ -522,7 +563,7 @@ class Orderbook {
     };
   }
 
-  place_order(order: Order) {
+  placeOrder(order: Order) {
     if (this.orders.has(order.order_id)) {
       throw new Error("This Order ID already exists");
     }
@@ -533,9 +574,9 @@ class Orderbook {
       );
     }
     if (order.side == "BUY") {
-      return this.process_buy_order(order);
+      return this.processBuyOrder(order);
     } else if (order.side == "SELL") {
-      return this.process_sell_order(order);
+      return this.processSellOrder(order);
     } else {
       throw new Error("Order can only be placed for buy and sell");
     }
