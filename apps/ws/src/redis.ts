@@ -1,28 +1,23 @@
 import { createClient, type RedisClientType } from "redis";
+import { EngineEventSchema } from "commons/src/engine-event";
+import type { WebSocketEvent } from "./z";
+
+const STREAM = "engine-events";
+const GROUP = "websocket";
+const CONSUMER = "ws-consumer-1";
 
 class RedisHandler {
-  private client: RedisClientType;
-  private publisher: RedisClientType;
+  private client: RedisClientType = createClient();
 
-  constructor() {
-    this.publisher = createClient();
-    this.client = createClient();
-  }
-
-  public async connect(): Promise<void> {
+  private async connect(): Promise<void> {
     if (!this.client.isOpen) {
       await this.client.connect();
     }
-    if (!this.publisher.isOpen) {
-      await this.publisher.connect();
-    }
   }
 
-  private async createEngineGroup() {
+  private async createGroup(): Promise<void> {
     try {
-      await this.client.xGroupCreate("engine-events", "websocket", "0", {
-        MKSTREAM: true,
-      });
+      await this.client.xGroupCreate(STREAM, GROUP, "0", { MKSTREAM: true });
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("BUSYGROUP")) {
         throw error;
@@ -30,6 +25,45 @@ class RedisHandler {
     }
   }
 
+  public async readEvents(
+    onEvent: (event: WebSocketEvent) => Promise<void>
+  ): Promise<void> {
+    await this.connect();
+    await this.createGroup();
+
+    while (true) {
+      const streams = await this.client.xReadGroup(
+        GROUP,
+        CONSUMER,
+        [{ key: STREAM, id: ">" }],
+        { BLOCK: 0, COUNT: 1 }
+      );
+      if (!streams) continue;
+
+      for (const stream of streams) {
+        for (const message of stream.messages) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(String(message.message.event));
+          } catch (error) {
+            throw new Error(`Invalid JSON in ${STREAM} entry ${message.id}`, {
+              cause: error,
+            });
+          }
+
+          const parsed = EngineEventSchema.safeParse(payload);
+          if (!parsed.success) {
+            throw new Error(`Invalid ${STREAM} entry ${message.id}: ${parsed.error.message}`);
+          }
+
+          if (parsed.data.destination === "ws") {
+            await onEvent(parsed.data);
+          }
+          await this.client.xAck(STREAM, GROUP, message.id);
+        }
+      }
+    }
+  }
 }
 
 export default RedisHandler;
