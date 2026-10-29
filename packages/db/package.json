@@ -20,6 +20,7 @@
   "dependencies": {
     "dotenv": "^18.0.8",
     "pg": "^8.23.1",
-    "prisma": "7.x.x"
+    "prisma": "7.x.x",
+    "commons": "workspace:*"
   }
 }

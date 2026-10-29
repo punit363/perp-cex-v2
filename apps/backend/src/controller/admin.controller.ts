@@ -13,10 +13,11 @@ async function addMarket(req: Request, res: Response): Promise<void> {
       throw new AppError("Incorrect credentials", 411);
     }
 
-    const response = await MarketRepo.new_market(market,"");
+    const response = await MarketRepo.newMarket(market, "");
 
-    handleResponse("New market created successfully",200,{id:response.id})
-
+    res.status(200).send(
+      handleResponse("New market created successfully", 1, { id: response.id })
+    );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     res

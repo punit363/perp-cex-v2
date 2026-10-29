@@ -13,17 +13,17 @@ async function signup(req: Request, res: Response): Promise<void> {
       throw new AppError("Required user details missing!", 411);
     }
 
-    const user = await UserRepo.get_user_by_username(username);
+    const user = await UserRepo.getUserByUsername(username);
 
     if (user) {
       throw new AppError("User already exist with this phone or email", 400);
     }
 
-    const new_user = await UserRepo.new_user(username, password);
+    const newUser = await UserRepo.newUser(username, password);
 
     res.status(200).send(
       handleResponse("User successfully registered", 1, {
-        username: new_user?.username || "",
+        username: newUser?.username || "",
       })
     );
   } catch (error) {
@@ -42,7 +42,7 @@ async function signin(req: Request, res: Response): Promise<void> {
       throw new AppError("Required credentials missing", 411);
     }
 
-    const user = await UserRepo.get_user_by_username(username);
+    const user = await UserRepo.getUserByUsername(username);
 
     if (!user) {
       throw new AppError("User not found. Verify username", 404);

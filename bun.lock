@@ -39,6 +39,7 @@
       "dependencies": {
         "@types/redis": "^4.0.11",
         "commons": "workspace:*",
+        "db": "workspace:*",
         "redis": "^6.3.1",
         "zod": "^4.6.7",
       },
@@ -107,6 +108,7 @@
     "packages/db": {
       "name": "db",
       "dependencies": {
+        "commons": "workspace:*",
         "dotenv": "^18.0.8",
         "pg": "^8.23.1",
         "prisma": "7.x.x",
