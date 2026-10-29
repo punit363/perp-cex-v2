@@ -1,5 +1,4 @@
 import type { UserAccount } from "./types";
-import UserRepo from "db/repositories/user.repo";
 
 class AccountStore {
   private accounts = new Map<string, UserAccount>();
@@ -18,22 +17,18 @@ class AccountStore {
         orders: new Set<string>(),
       };
       this.accounts.set(user_id, account);
-      UserRepo.createCollateral(user_id);
     }
-
     return account;
   }
 
   credit(user_id: string, amount: bigint): void {
     const account = this.getOrCreate(user_id);
     account.collateral.available += amount;
-    UserRepo.creditAvailableCollateral(user_id, amount);
   }
 
   debitMargin(user_id: string, amount: bigint): void {
     const account = this.getOrCreate(user_id);
     account.collateral.reserved -= amount;
-    UserRepo.debitMarginCollateral(user_id, amount);
   }
 
   reserveMargin(user_id: string, amount: bigint): void {
@@ -47,7 +42,6 @@ class AccountStore {
 
     account.collateral.available -= amount;
     account.collateral.reserved += amount;
-    UserRepo.reserveMarginCollateral(user_id, amount);
   }
 
   releaseMargin(user_id: string, amount: bigint): void {
@@ -58,7 +52,6 @@ class AccountStore {
 
     account.collateral.available += amount;
     account.collateral.reserved -= amount;
-    UserRepo.releaseMarginCollateral(user_id, amount);
   }
 }
 
