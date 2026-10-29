@@ -1,6 +1,6 @@
 import BTree from "sorted-btree";
 import type { Fill, Order, OrderNode, PriceLevel } from "./types";
-import { formatFixed } from "./math/fixed-point";
+import { divideFixed, formatFixed, multiplyFixed } from "./math/fixed-point";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import {
@@ -433,10 +433,80 @@ class Orderbook {
       } else {
         order.status = OrderStatus.FILLED;
       }
-    } else if (order.type == "MARKET") {
-      //TODO: Market Order to be handled
-    } else {
-      throw new Error("Order can only be of type limit and market");
+    }
+
+    let odr_amount = odr_price;
+    let rem_amt = 0n;
+    if (order.type == "MARKET") {
+      let pair = this.asks.nextHigherPair(undefined);
+
+      marketBuyLevels: while (
+        pair &&
+        odr_amount > 0n &&
+        odr_filled < odr_quantity
+      ) {
+        const [price, level] = pair;
+        let current_node = level.head;
+
+        while (odr_filled < odr_quantity) {
+          if (!current_node) break;
+          let { user_id, order_id, quantity, next } = current_node;
+
+          const affordable_qty = divideFixed(odr_amount, price, "floor");
+          if (affordable_qty === 0n) break marketBuyLevels;
+
+          const remaining_qty = odr_quantity - odr_filled;
+          const fill_qty = min(
+            min(remaining_qty, affordable_qty),
+            quantity - current_node.filled
+          );
+          if (fill_qty === 0n) {
+            current_node = next;
+            continue;
+          }
+          const margin_before = this.remainingOrderMargin(current_node);
+
+          odr_filled += fill_qty;
+          current_node.filled += fill_qty;
+          level.remaining_qty -= fill_qty;
+          odr_amount -= multiplyFixed(fill_qty, price, "ceil");
+          const maker_order_margin_consumed =
+            margin_before - this.remainingOrderMargin(current_node);
+
+          let maker_order_status = OrderStatus.OPEN;
+          if (quantity == current_node.filled) {
+            maker_order_status = OrderStatus.FILLED;
+            this.removeOrder(current_node);
+          } else if (current_node.filled > 0) {
+            maker_order_status = OrderStatus.PARTIALLY_FILLED;
+          }
+
+          const fill: Fill = {
+            trade_id: generate_trade_id(),
+            maker_order_id: order_id,
+            maker_user_id: user_id,
+            taker_order_id: order.order_id,
+            taker_user_id: order.user_id,
+            maker_leverage: current_node.leverage,
+            maker_order_margin_consumed,
+            price,
+            maker_order_status,
+            filled: fill_qty,
+          };
+          fills.push(fill);
+
+          current_node = next;
+        }
+        if (level.remaining_qty == 0n) {
+          this.asks.delete(price);
+        }
+        pair = this.asks.nextHigherPair(price);
+        order.status = OrderStatus.FILLED;
+      }
+
+      if (odr_amount > 0) {
+        rem_amt = odr_amount;
+      }
     }
 
     this.updateMarketData(fills);
@@ -445,6 +515,8 @@ class Orderbook {
         order_id: order.order_id,
         filled: odr_filled,
         status: order.status,
+        rem_amt,
+        rem_qty: 0n,
       },
       fills,
     };
