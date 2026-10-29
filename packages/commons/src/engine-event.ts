@@ -1,14 +1,19 @@
 import { z } from "zod";
 import { OrderSide, OrderStatus, OrderType, PositionType } from "./order.type";
 
-// Stream values stay as JSON strings until a consumer converts them for storage.
+// DB events carry scaled integers. BigInts become integer strings on the JSON stream.
+const ScaledIntegerSchema = z
+  .union([z.bigint(), z.string().regex(/^-?(?:0|[1-9]\d*)$/)])
+  .transform((value) => value.toString());
+
+// WebSocket events expose human-readable decimal values.
 const DecimalSchema = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d{1,8})?$/);
 const IdSchema = z.string().min(1);
 
 const BalanceChangeSchema = z.object({
   user_id: IdSchema,
-  available: DecimalSchema,
-  reserved: DecimalSchema,
+  available: ScaledIntegerSchema,
+  reserved: ScaledIntegerSchema,
 });
 
 const OrderChangeSchema = z.object({
@@ -18,32 +23,33 @@ const OrderChangeSchema = z.object({
   type: z.enum(OrderType),
   side: z.enum(OrderSide),
   status: z.enum(OrderStatus),
-  price: DecimalSchema,
-  quantity: DecimalSchema,
-  filled: DecimalSchema,
-  leverage: DecimalSchema,
-  initial_margin: DecimalSchema,
-  remaining_order_margin: DecimalSchema,
+  price: ScaledIntegerSchema,
+  quantity: ScaledIntegerSchema,
+  filled: ScaledIntegerSchema,
+  leverage: ScaledIntegerSchema,
+  initial_margin: ScaledIntegerSchema,
+  remaining_order_margin: ScaledIntegerSchema,
+  slippage: ScaledIntegerSchema,
+  arrival_seq: ScaledIntegerSchema,
 });
 
 const FillChangeSchema = z.object({
   trade_id: IdSchema,
-  market_id: IdSchema,
   maker_order_id: IdSchema,
   taker_order_id: IdSchema,
   maker_user_id: IdSchema,
   taker_user_id: IdSchema,
-  price: DecimalSchema,
-  quantity: DecimalSchema,
+  price: ScaledIntegerSchema,
+  quantity: ScaledIntegerSchema,
 });
 
 const PositionSchema = z.object({
   type: z.enum(PositionType),
-  quantity: DecimalSchema,
-  reserved_margin: DecimalSchema,
-  avg_entry_price: DecimalSchema,
-  unrealized_pnl: DecimalSchema,
-  funding_accrued: DecimalSchema,
+  quantity: ScaledIntegerSchema,
+  reserved_margin: ScaledIntegerSchema,
+  avg_entry_price: ScaledIntegerSchema,
+  unrealized_pnl: ScaledIntegerSchema,
+  funding_accrued: ScaledIntegerSchema,
 });
 
 const PositionChangeSchema = z.object({
@@ -59,8 +65,8 @@ const DepthLevelSchema = z.object({
 
 const MarketDataChangeSchema = z.object({
   market_id: IdSchema,
-  mark_price: DecimalSchema.optional(),
-  last_traded_price: DecimalSchema.optional(),
+  mark_price: ScaledIntegerSchema.optional(),
+  last_traded_price: ScaledIntegerSchema.optional(),
   last_trade_id: IdSchema.optional(),
 });
 
@@ -73,7 +79,7 @@ const EventMetadataSchema = z.object({
 export const DBEventSchema = EventMetadataSchema.extend({
   destination: z.literal("db"),
   event_type: z.enum([
-    "ONRAMP",
+    "BALANCE_CHANGE",
     "PLACE_ORDER",
     "CANCEL_ORDER",
     "MARK_PRICE_UPDATE",
@@ -130,11 +136,9 @@ export const WebSocketEventSchema = z.discriminatedUnion("event_type", [
   TickerEventSchema,
 ]);
 
-export const EngineEventSchema = z.union([
-  DBEventSchema,
-  WebSocketEventSchema,
-]);
+export const EngineEventSchema = z.union([DBEventSchema, WebSocketEventSchema]);
 
 export type DBEvent = z.output<typeof DBEventSchema>;
 export type WebSocketEvent = z.output<typeof WebSocketEventSchema>;
 export type EngineEvent = z.output<typeof EngineEventSchema>;
+export type EngineEventInput = z.input<typeof EngineEventSchema>;

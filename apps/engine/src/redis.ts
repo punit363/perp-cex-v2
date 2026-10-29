@@ -1,5 +1,5 @@
 import { createClient, type RedisClientType } from "redis";
-import { EngineEventSchema, type EngineEvent } from "commons/src/engine-event";
+import { EngineEventSchema, type EngineEventInput } from "commons/src/engine-event";
 import type { EngineResponse } from "commons/src/index";
 import { RequestToEngineSchema, type EngineCommand } from "./zod/z";
 
@@ -43,7 +43,7 @@ class RedisHandler {
     this.eventGroupsInitialized = true;
   }
 
-  public async publishEngineEvent(event: EngineEvent): Promise<string> {
+  public async publishEngineEvent(event: EngineEventInput): Promise<string> {
     const payload = EngineEventSchema.parse(event);
     await this.connect();
     return this.publisher.xAdd(EVENT_STREAM, "*", {
