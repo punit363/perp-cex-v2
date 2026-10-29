@@ -38,7 +38,9 @@
       "name": "database",
       "dependencies": {
         "@types/redis": "^4.0.11",
+        "commons": "workspace:*",
         "redis": "^6.3.1",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -80,6 +82,7 @@
       "name": "ws",
       "dependencies": {
         "@types/redis": "^4.0.11",
+        "commons": "workspace:*",
         "redis": "^6.3.1",
       },
       "devDependencies": {
@@ -91,6 +94,9 @@
     },
     "packages/commons": {
       "name": "commons",
+      "dependencies": {
+        "zod": "^4.6.7",
+      },
       "devDependencies": {
         "@types/bun": "latest",
       },
