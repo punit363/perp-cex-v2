@@ -292,10 +292,66 @@ class Orderbook {
       } else {
         order.status = OrderStatus.FILLED;
       }
-    } else if (order.type == "MARKET") {
-      //TODO: Market Order to be handled
-    } else {
-      throw new Error("Order can only be of type limit and market");
+    }
+
+    let rem_qty: bigint = 0n;
+    if (order.type == "MARKET" && order.quantity > 0n) {
+      let pair = this.bids.nextLowerPair(undefined);
+
+      while (pair) {
+        const [price, level] = pair;
+        if (odr_quantity == odr_filled) break;
+
+        let current_node = level.head;
+
+        while (odr_filled != odr_quantity) {
+          if (!current_node) break;
+          let { user_id, order_id, quantity, next } = current_node;
+
+          const rem_odr_qty = odr_quantity - odr_filled;
+          const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
+          const margin_before = this.remainingOrderMargin(current_node);
+
+          odr_filled += fill_qty;
+          current_node.filled += fill_qty;
+          level.remaining_qty -= fill_qty;
+          const maker_order_margin_consumed =
+            margin_before - this.remainingOrderMargin(current_node);
+
+          let maker_order_status = OrderStatus.OPEN;
+          if (quantity == current_node.filled) {
+            maker_order_status = OrderStatus.FILLED;
+            this.removeOrder(current_node);
+          } else if (current_node.filled > 0) {
+            maker_order_status = OrderStatus.PARTIALLY_FILLED;
+          }
+
+          const fill: Fill = {
+            trade_id: generate_trade_id(),
+            maker_order_id: order_id,
+            maker_user_id: user_id,
+            taker_order_id: order.order_id,
+            taker_user_id: order.user_id,
+            price,
+            maker_leverage: current_node.leverage,
+            maker_order_margin_consumed,
+            maker_order_status,
+            filled: fill_qty,
+          };
+          fills.push(fill);
+
+          current_node = next;
+        }
+        if (level.remaining_qty == 0n) {
+          this.bids.delete(price);
+        }
+        pair = this.bids.nextLowerPair(price);
+      }
+
+      if (odr_quantity > odr_filled) {
+        rem_qty += odr_quantity - odr_filled;
+      }
+      order.status = OrderStatus.FILLED;
     }
 
     this.updateMarketData(fills);
@@ -304,6 +360,8 @@ class Orderbook {
         order_id: order.order_id,
         filled: odr_filled,
         status: order.status,
+        rem_qty,
+        rem_amt: 0n,
       },
       fills,
     };
