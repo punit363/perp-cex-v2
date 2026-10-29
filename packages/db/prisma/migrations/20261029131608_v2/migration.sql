@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Collateral" ALTER COLUMN "available" SET DATA TYPE BIGINT,
+ALTER COLUMN "reserved" SET DATA TYPE BIGINT;

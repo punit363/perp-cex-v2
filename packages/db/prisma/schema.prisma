@@ -37,19 +37,22 @@ enum OrderStatus {
 }
 
 model Order {
-  id              String      @id @default(uuid())
-  user_id         String
-  market_id       String
-  order_type      OrderType
-  side            OrderSide
-  price           String
-  slippage        Int
-  quantity        String
-  filled_quantity String
-  initial_margin  String
-  status          OrderStatus
-  created_at      DateTime    @default(now())
-  updated_at      DateTime    @updatedAt
+  id                              String      @id @default(uuid())
+  user_id                         String
+  market_id                       String
+  order_type                      OrderType
+  side                            OrderSide
+  price                           String
+  slippage                        Int
+  quantity                        String
+  filled_quantity                 String
+  initial_margin                  String
+  leverage                        BigInt
+  remaining_order_margin          BigInt
+  status                          OrderStatus
+  arrival_seq                     BigInt      @unique @default(autoincrement())
+  created_at                      DateTime    @default(now())
+  updated_at                      DateTime    @updatedAt
 
   maker_fills Fill[] @relation("maker")
   taker_fills Fill[] @relation("taker")
@@ -67,6 +70,7 @@ model Fill {
   quantity   String
   price      String
   created_at DateTime @default(now())
+  trade_id   String   @unique
 
   // Foreign keys for Orders
   maker_order_id String
@@ -81,4 +85,11 @@ model Fill {
   taker_order Order @relation("taker", fields: [taker_order_id], references: [id])
   maker_user  User  @relation("maker_user", fields: [maker_id], references: [id])
   taker_user  User  @relation("taker_user", fields: [taker_id], references: [id])
+}
+
+model Collateral {
+  id              String      @id @default(uuid())
+  user_id         String      @unique
+  available       BigInt
+  reserved        BigInt
 }

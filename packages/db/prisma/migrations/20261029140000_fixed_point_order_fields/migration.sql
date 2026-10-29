@@ -1,0 +1,3 @@
+ALTER TABLE "Order"
+  ALTER COLUMN "leverage" SET DATA TYPE BIGINT,
+  ALTER COLUMN "remaining_order_margin" SET DATA TYPE BIGINT;
