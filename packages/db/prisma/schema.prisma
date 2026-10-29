@@ -15,6 +15,7 @@ model User {
   username    String
   password    String
   orders      Order[]
+  positions   Position[]
   maker_fills Fill[]  @relation("maker_user")
   taker_fills Fill[]  @relation("taker_user")
 }
@@ -36,17 +37,23 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum PositionType {
+  LONG
+  SHORT
+}
+
 model Order {
   id                              String      @id @default(uuid())
+  order_id                        String      @unique
   user_id                         String
   market_id                       String
-  order_type                      OrderType
+  type                            OrderType
   side                            OrderSide
-  price                           String
-  slippage                        Int
-  quantity                        String
-  filled_quantity                 String
-  initial_margin                  String
+  price                           BigInt
+  slippage                        BigInt
+  quantity                        BigInt
+  filled                          BigInt
+  initial_margin                  BigInt
   leverage                        BigInt
   remaining_order_margin          BigInt
   status                          OrderStatus
@@ -60,15 +67,18 @@ model Order {
 }
 
 model Market {
-  id       String @id @default(uuid())
-  slug     String
-  imageUrl String
+  id                String  @id @default(uuid())
+  slug              String
+  imageUrl          String
+  mark_price        BigInt?
+  last_traded_price BigInt?
+  last_trade_id     String?
 }
 
 model Fill {
   id         String   @id @default(uuid())
-  quantity   String
-  price      String
+  quantity   BigInt
+  price      BigInt
   created_at DateTime @default(now())
   trade_id   String   @unique
 
@@ -77,14 +87,29 @@ model Fill {
   taker_order_id String
 
   // Foreign keys for Users
-  maker_id String
-  taker_id String
+  maker_user_id String
+  taker_user_id String
 
   // Relations mapped to their specific unique foreign keys
-  maker_order Order @relation("maker", fields: [maker_order_id], references: [id])
-  taker_order Order @relation("taker", fields: [taker_order_id], references: [id])
-  maker_user  User  @relation("maker_user", fields: [maker_id], references: [id])
-  taker_user  User  @relation("taker_user", fields: [taker_id], references: [id])
+  maker_order Order @relation("maker", fields: [maker_order_id], references: [order_id])
+  taker_order Order @relation("taker", fields: [taker_order_id], references: [order_id])
+  maker_user  User  @relation("maker_user", fields: [maker_user_id], references: [id])
+  taker_user  User  @relation("taker_user", fields: [taker_user_id], references: [id])
+}
+
+model Position {
+  user_id          String
+  market_id        String
+  type             PositionType
+  quantity         BigInt
+  reserved_margin  BigInt
+  avg_entry_price  BigInt
+  unrealized_pnl   BigInt
+  funding_accrued  BigInt
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@id([user_id, market_id])
 }
 
 model Collateral {
