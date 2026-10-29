@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "typecheck": "bun check"
+    "dev": "bun --hot src/index"
   },
   "devDependencies": {
     "@types/bun": "latest"
