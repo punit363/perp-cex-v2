@@ -9,7 +9,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/redis": "^4.0.11",
-    "commons": "workspace:*"
+    "commons": "workspace:*",
+    "db": "workspace:*"
   },
   "peerDependencies": {
     "typescript": "^7"
