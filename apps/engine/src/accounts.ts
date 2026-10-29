@@ -27,6 +27,11 @@ class AccountStore {
     account.collateral.available += amount;
   }
 
+  debitMargin(user_id: string, amount: bigint): void {
+    const account = this.getOrCreate(user_id);
+    account.collateral.reserved -= amount;
+  }
+
   reserveMargin(user_id: string, amount: bigint): void {
     const account = this.accounts.get(user_id);
     if (!account) {
