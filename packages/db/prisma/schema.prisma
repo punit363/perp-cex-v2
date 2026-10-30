@@ -11,7 +11,7 @@ datasource db {
 }
 
 model User {
-  id          String  @id @default(uuid())
+  user_id     String  @id @default(uuid())
   username    String
   password    String
   orders      Order[]
@@ -43,8 +43,7 @@ enum PositionType {
 }
 
 model Order {
-  id                              String      @id @default(uuid())
-  order_id                        String      @unique
+  order_id                        String      @id
   user_id                         String
   market_id                       String
   type                            OrderType
@@ -63,11 +62,11 @@ model Order {
 
   maker_fills Fill[] @relation("maker")
   taker_fills Fill[] @relation("taker")
-  user        User   @relation(fields: [user_id], references: [id])
+  user        User   @relation(fields: [user_id], references: [user_id])
 }
 
 model Market {
-  id                String  @id @default(uuid())
+  market_id         String  @id @default(uuid())
   slug              String
   imageUrl          String
   mark_price        BigInt?
@@ -76,11 +75,10 @@ model Market {
 }
 
 model Fill {
-  id         String   @id @default(uuid())
   quantity   BigInt
   price      BigInt
   created_at DateTime @default(now())
-  trade_id   String   @unique
+  trade_id   String   @id
 
   // Foreign keys for Orders
   maker_order_id String
@@ -93,8 +91,8 @@ model Fill {
   // Relations mapped to their specific unique foreign keys
   maker_order Order @relation("maker", fields: [maker_order_id], references: [order_id])
   taker_order Order @relation("taker", fields: [taker_order_id], references: [order_id])
-  maker_user  User  @relation("maker_user", fields: [maker_user_id], references: [id])
-  taker_user  User  @relation("taker_user", fields: [taker_user_id], references: [id])
+  maker_user  User  @relation("maker_user", fields: [maker_user_id], references: [user_id])
+  taker_user  User  @relation("taker_user", fields: [taker_user_id], references: [user_id])
 }
 
 model Position {
@@ -107,14 +105,13 @@ model Position {
   unrealized_pnl   BigInt
   funding_accrued  BigInt
 
-  user User @relation(fields: [user_id], references: [id])
+  user User @relation(fields: [user_id], references: [user_id])
 
   @@id([user_id, market_id])
 }
 
 model Collateral {
-  id              String      @id @default(uuid())
-  user_id         String      @unique
+  user_id         String      @id
   available       BigInt
   reserved        BigInt
 }

@@ -16,7 +16,7 @@ async function addMarket(req: Request, res: Response): Promise<void> {
     const response = await MarketRepo.newMarket(market, "");
 
     res.status(200).send(
-      handleResponse("New market created successfully", 1, { id: response.id })
+      handleResponse("New market created successfully", 1, { market_id: response.market_id })
     );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

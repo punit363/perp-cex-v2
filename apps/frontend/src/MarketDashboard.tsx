@@ -21,7 +21,7 @@ import usdtIcon from "../public/icons/usdt_coin.png";
 import xrpIcon from "../public/icons/xrp_coin.png";
 
 export type Market = {
-  id: string;
+  market_id: string;
   slug: string;
   imageUrl: string;
   mark_price: string | null;
@@ -39,7 +39,9 @@ export const icons: Record<string, string> = {
 };
 export const previewPairs = [
   "AAVE-ETH", "DOT-ETH", "GRT-ETH", "MATIC-ETH", "SOL-ETH",
-  "ADA-USDT", "BCH-USDT", "BTC-USDT", "DOGE-USDT", "ETH-USDT",
+  "ADA-USDT", "AVAX-USDT", "BCH-USDT", "BTC-USDT", "DOGE-USDT",
+  "ETH-USDT", "FIL-USDT", "LINK-USDT", "LTC-USDT", "OP-USDT",
+  "UNI-USDT", "USDC-USDT", "XRP-USDT",
 ];
 const local = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 export const apiBase = local ? "http://localhost:8000/api/v1" : "/api/v1";
@@ -144,13 +146,13 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
     socket.onopen = () => {
       setFeedState("connected");
       for (const market of markets) {
-        socket.send(JSON.stringify({ action: "SUBSCRIBE", type: "TICKER", market_id: market.id }));
+        socket.send(JSON.stringify({ action: "SUBSCRIBE", type: "TICKER", market_id: market.market_id }));
       }
     };
     socket.onmessage = (event) => {
       try {
         const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
-        if (typeof payload.market_id !== "string" || !markets.some((market) => market.id === payload.market_id)) return;
+        if (typeof payload.market_id !== "string" || !markets.some((market) => market.market_id === payload.market_id)) return;
         const mark = typeof payload.mark_price === "string" ? payload.mark_price : undefined;
         const trade = typeof payload.last_traded_price === "string" ? payload.last_traded_price : undefined;
         if (!mark && !trade) return;
@@ -167,7 +169,7 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
 
   const preview = markets.length === 0;
   const cards: MarketCardData[] = (preview
-    ? previewPairs.map((slug) => ({ id: slug, slug, imageUrl: "", mark_price: null, last_traded_price: null }))
+    ? previewPairs.map((slug) => ({ market_id: slug, slug, imageUrl: "", mark_price: null, last_traded_price: null }))
     : markets
   ).map((market) => ({ ...market, ...partsOf(market.slug), preview }));
   const groups = Array.from(new Set(cards.map((market) => market.quote))).sort((a, b) => {
@@ -204,7 +206,7 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
         {groups.map((quote) => (
           <section className="market-group" key={quote} aria-label={`${quote} markets`}>
             <div className="market-group__heading"><img src={icons[quote] || usdIcon} alt="" width="30" height="30" /><h2>{quote} MARKETS</h2><span>{cards.filter((market) => market.quote === quote).length} PAIRS</span></div>
-            <div className="market-grid">{cards.filter((market) => market.quote === quote).map((market) => <MarketCard key={market.id} market={market} live={quotes[market.id]} history={history[market.id] ?? []} onSelect={() => onSelectMarket(market.id)} />)}</div>
+            <div className="market-grid">{cards.filter((market) => market.quote === quote).map((market) => <MarketCard key={market.market_id} market={market} live={quotes[market.market_id]} history={history[market.market_id] ?? []} onSelect={() => onSelectMarket(market.market_id)} />)}</div>
           </section>
         ))}
       </div>

@@ -4,7 +4,7 @@ export const MarketRepo = {
   listMarkets: async () => {
     return prisma.market.findMany({
       select: {
-        id: true,
+        market_id: true,
         slug: true,
         imageUrl: true,
         mark_price: true,
@@ -14,11 +14,11 @@ export const MarketRepo = {
     });
   },
 
-  getMarket: async (id: string) => {
+  getMarket: async (market_id: string) => {
     return prisma.market.findUnique({
-      where: { id },
+      where: { market_id },
       select: {
-        id: true,
+        market_id: true,
         slug: true,
         imageUrl: true,
         mark_price: true,
@@ -46,6 +46,6 @@ export const MarketRepo = {
   }) => {
     const { market_id, ...data } = change;
     if (Object.keys(data).length === 0) return;
-    await prisma.market.update({ where: { id: market_id }, data });
+    await prisma.market.update({ where: { market_id }, data });
   },
 };

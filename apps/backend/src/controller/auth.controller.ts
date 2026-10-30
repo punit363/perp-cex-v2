@@ -56,7 +56,7 @@ async function signin(req: Request, res: Response): Promise<void> {
 
     const token = jwt.sign(
       {
-        id: user.id,
+        user_id: user.user_id,
       },
       CONFIG.jwt_secret_key,
       { expiresIn: "1d" }

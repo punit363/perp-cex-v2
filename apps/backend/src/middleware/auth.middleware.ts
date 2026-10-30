@@ -13,7 +13,7 @@ export const authenticate = (
     const token = req.headers.token as string;
     const decrypted = jwt.verify(token, CONFIG.jwt_secret_key) as JwtPayload;
 
-    req.user_id = decrypted.id;
+    req.user_id = decrypted.user_id ?? decrypted.id;
     next();
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

@@ -242,7 +242,7 @@ export function MarketTradePage({ marketId, token, onBack, onSignIn, onBalanceRe
   useEffect(() => {
     setMarket(null); setDepth(null); setPoints([]); setTrades([]); setLastPrice(null); setMarkPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
     if (previewPairs.includes(marketId)) {
-      setMarket({ id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
+      setMarket({ market_id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
       setPreview(true); setMarketLoading(false); return;
     }
     setPreview(false);
@@ -263,7 +263,7 @@ export function MarketTradePage({ marketId, token, onBack, onSignIn, onBalanceRe
     if (!market || preview) return;
     const controller = new AbortController();
     setDepthLoading(true); setDepthError("");
-    api<{ engine_response: { data: Depth } }>(`/market/depth/${encodeURIComponent(market.id)}`, { signal: controller.signal })
+    api<{ engine_response: { data: Depth } }>(`/market/depth/${encodeURIComponent(market.market_id)}`, { signal: controller.signal })
       .then((data) => setDepth(data.engine_response.data))
       .catch((cause) => { if (!controller.signal.aborted) setDepthError(cause instanceof Error ? cause.message : "Order book unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setDepthLoading(false); });
@@ -282,12 +282,12 @@ export function MarketTradePage({ marketId, token, onBack, onSignIn, onBalanceRe
       socket.onopen = () => {
         if (stopped) return;
         setFeed("connected");
-        for (const type of ["BOOK", "TRADE", "TICKER"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.id }));
+        for (const type of ["BOOK", "TRADE", "TICKER"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.market_id }));
       };
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(String(event.data)) as Record<string, unknown>;
-          if (data.market_id !== market.id) return;
+          if (data.market_id !== market.market_id) return;
           if (Array.isArray(data.bids) && Array.isArray(data.asks)) {
             setDepth({ bids: data.bids as Level[], asks: data.asks as Level[] });
           } else if (typeof data.trade_id === "string" && typeof data.price === "string" && typeof data.quantity === "string") {
