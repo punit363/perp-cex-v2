@@ -1,8 +1,11 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { MarketDashboard } from "./MarketDashboard";
+import { BalanceDashboard } from "./BalanceDashboard";
+import { MarketTradePage } from "./MarketTradePage";
 import "./index.css";
 
 type AuthMode = "signin" | "register";
-type Section = "markets" | "balances";
+type Section = "home" | "markets" | "balances" | "trade";
 type Session = { username: string; token: string };
 type Balance = { available: string; reserved: string };
 type ApiEnvelope = {
@@ -13,6 +16,19 @@ type ApiEnvelope = {
     engine_response?: { status?: number; message?: string; data?: Balance };
   };
 };
+
+function sectionFromPath(pathname: string): Section {
+  const path = pathname.replace(/\/$/, "");
+  if (path === "/markets") return "markets";
+  if (path === "/balances") return "balances";
+  if (path.startsWith("/market/") && path.length > 8) return "trade";
+  return "home";
+}
+
+function marketIdFromPath(pathname: string) {
+  try { return decodeURIComponent(pathname.slice(8)); }
+  catch { return ""; }
+}
 
 const API_BASE =
   location.hostname === "localhost" || location.hostname === "127.0.0.1"
@@ -49,15 +65,9 @@ async function request(path: string, options: RequestInit): Promise<ApiEnvelope>
   return payload ?? {};
 }
 
-function formatBalance(value: string) {
-  const [whole, fraction] = value.split(".");
-  if (whole === undefined) return value;
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return fraction === undefined ? grouped : grouped + "." + fraction;
-}
-
 export function App() {
-  const [section, setSection] = useState<Section>("markets");
+  const [section, setSection] = useState<Section>(() => sectionFromPath(location.pathname));
+  const [marketId, setMarketId] = useState(() => marketIdFromPath(location.pathname));
   const [mode, setMode] = useState<AuthMode>("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -70,34 +80,62 @@ export function App() {
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceError, setBalanceError] = useState("");
   const usernameInput = useRef<HTMLInputElement>(null);
+  const activeToken = useRef<string | null>(null);
+  const returnToMarket = useRef<string | null>(null);
+
+  useEffect(() => {
+    const syncPath = () => {
+      setSection(sectionFromPath(location.pathname));
+      if (location.pathname.startsWith("/market/")) setMarketId(marketIdFromPath(location.pathname));
+    };
+    window.addEventListener("popstate", syncPath);
+    return () => window.removeEventListener("popstate", syncPath);
+  }, []);
+
+  function navigate(next: Section) {
+    if (next === "trade") return;
+    const path = next === "home" ? "/" : `/${next}`;
+    if (location.pathname !== path) window.history.pushState({}, "", path);
+    setSection(next);
+  }
+
+  function navigateToMarket(id: string) {
+    const path = `/market/${encodeURIComponent(id)}`;
+    if (location.pathname !== path) window.history.pushState({}, "", path);
+    setMarketId(id);
+    setSection("trade");
+  }
 
   async function loadBalance(token: string) {
     setBalanceLoading(true);
     setBalanceError("");
     try {
       const result = await request("/user/balance", { method: "GET", headers: { token } });
+      if (activeToken.current !== token) return;
       const engineResult = result.data?.engine_response;
       if (!engineResult?.status || !engineResult.data) {
         throw new Error(engineResult?.message || "Balance is not available yet.");
       }
       setBalance(engineResult.data);
     } catch (cause) {
+      if (activeToken.current !== token) return;
       setBalance(null);
       setBalanceError(cause instanceof Error ? cause.message : "Could not load balance.");
     } finally {
-      setBalanceLoading(false);
+      if (activeToken.current === token) setBalanceLoading(false);
     }
   }
 
   function showBalances() {
-    if (!session) {
-      setMode("signin");
-      setMessage("Sign in to view your balances.");
-      usernameInput.current?.focus();
-      return;
-    }
-    setSection("balances");
-    void loadBalance(session.token);
+    navigate("balances");
+    if (session) void loadBalance(session.token);
+  }
+
+  function showSignIn() {
+    returnToMarket.current = section === "trade" ? marketId : null;
+    navigate("home");
+    setMode("signin");
+    requestAnimationFrame(() => usernameInput.current?.focus());
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -115,9 +153,15 @@ export function App() {
       const result = await request("/auth/signin", options);
       const token = result.data?.token;
       if (!token) throw new Error("Sign in succeeded, but no session token was returned.");
+      activeToken.current = token;
       setSession({ username: username.trim(), token });
+      setBalance(null);
       setPassword("");
-      setMessage(mode === "register" ? "Account created. You are signed in." : "Signed in successfully.");
+      if (returnToMarket.current) navigateToMarket(returnToMarket.current);
+      else navigate("markets");
+      returnToMarket.current = null;
+      setMessage("");
+      void loadBalance(token);
     } catch (cause) {
       setError(
         cause instanceof TypeError
@@ -132,9 +176,10 @@ export function App() {
   }
 
   function signOut() {
+    activeToken.current = null;
     setSession(null);
-    setSection("markets");
     setBalance(null);
+    setBalanceLoading(false);
     setBalanceError("");
     setMessage("You have signed out.");
   }
@@ -143,11 +188,11 @@ export function App() {
     <div className="site-shell">
       <header className="topbar">
         <div className="topbar__left">
-          <button className="brand brand--header" type="button" onClick={() => setSection("markets")} aria-label="Apex Exchange home">
+          <button className="brand brand--header" type="button" onClick={() => navigate("home")} aria-label="Apex Exchange home">
             <BrandMark compact /><span>APEX <span className="brand__muted">EXCHANGE</span></span>
           </button>
           <nav className="nav" aria-label="Main navigation">
-            <button type="button" className={"nav__item" + (section === "markets" ? " is-active" : "")} onClick={() => setSection("markets")}>Markets</button>
+            <button type="button" className={"nav__item" + (section !== "balances" ? " is-active" : "")} onClick={() => navigate("markets")}>Markets</button>
             <button type="button" className={"nav__item" + (section === "balances" ? " is-active" : "")} onClick={showBalances}>Balances</button>
           </nav>
         </div>
@@ -155,24 +200,20 @@ export function App() {
           <span className="environment-badge"><span className="environment-badge__dot" /> Simulated trading</span>
           <span className="topbar__divider" />
           {session
-            ? <button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Sign Out</button>
-            : <button type="button" className="topbar__action" onClick={() => usernameInput.current?.focus()}>Sign In</button>}
+            ? <><div className="topbar__identity"><strong>{session.username}</strong><span>Trading account</span></div><button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Sign Out</button></>
+            : <button type="button" className="topbar__action" onClick={showSignIn}>Sign In</button>}
         </div>
       </header>
 
-      <main className="landing">
+      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} onBack={() => navigate("markets")} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} onRefresh={() => { if (session) void loadBalance(session.token); }} onSignIn={showSignIn} /> : <main className="landing">
         <section className="hero-panel" aria-labelledby="hero-heading">
           <div className="hero-panel__glow" aria-hidden="true" />
           <div className="hero-panel__inner">
             <div className="hero-brand"><BrandMark /><span>APEX <span className="brand__muted">EXCHANGE</span></span></div>
             <div className="hero-copy">
               <div className="eyebrow"><span className="eyebrow__line" /> THE PERPETUAL TRADING DESK</div>
-              <h1 id="hero-heading">
-                {section === "balances" ? <>Your account.<br /><em>Your view.</em></> : <>Trade perpetuals<br />with <em>clarity.</em></>}
-              </h1>
-              <p>{section === "balances"
-                ? "Keep your available and reserved collateral in one place. Your balances update as the engine processes your trades."
-                : "A focused home for order placement, live market depth, and position tracking. Start with simulated collateral and explore the exchange as it takes shape."}</p>
+              <h1 id="hero-heading">Trade perpetuals<br />with <em>clarity.</em></h1>
+              <p>A focused home for order placement, live market depth, and position tracking. Start with simulated collateral and explore the exchange as it takes shape.</p>
               <div className="feature-grid" aria-label="Exchange features">
                 <div className="feature-card">
                   <span className="feature-card__label">MATCHING MODEL</span>
@@ -200,17 +241,7 @@ export function App() {
                 <h2>Welcome, {session.username}</h2>
                 <p className="account-card__intro">Your trading account is ready in this session.</p>
                 {message && <p className="form-message form-message--success" role="status">{message}</p>}
-                {section === "balances" ? (
-                  <div className="balance-view">
-                    <div className="balance-view__heading"><span>Collateral balance</span><button type="button" onClick={() => void loadBalance(session.token)} disabled={balanceLoading}>Refresh</button></div>
-                    {balanceLoading ? <p className="balance-view__empty" role="status">Loading balance…</p> : balance ? (
-                      <div className="balance-view__rows">
-                        <div><span>Available</span><strong>{formatBalance(balance.available)}</strong></div>
-                        <div><span>Reserved</span><strong>{formatBalance(balance.reserved)}</strong></div>
-                      </div>
-                    ) : <p className="balance-view__empty" role="status">{balanceError || "No balance available yet."}</p>}
-                  </div>
-                ) : <button type="button" className="primary-button" onClick={showBalances}>View Balances <span aria-hidden="true">↗</span></button>}
+                <button type="button" className="primary-button" onClick={showBalances}>View Balances <span aria-hidden="true">↗</span></button>
                 <p className="account-card__footnote">Simulated trading environment</p>
               </>
             ) : (
@@ -239,7 +270,7 @@ export function App() {
             )}
           </div>
         </section>
-      </main>
+      </main>}
     </div>
   );
 }
