@@ -1,21 +1,15 @@
-# db
+# Database package
 
-To install dependencies:
+After starting PostgreSQL and applying the Prisma migrations, create the markets
+represented by the frontend icons from this directory:
 
-```bash
-bun install
+```sh
+bun run seed:markets
 ```
 
-To run:
+The command creates 18 pairs. AAVE, DOT, GRT, MATIC, and SOL are quoted in ETH;
+the remaining base assets are quoted in USDT. USD and USDT icons represent quote
+or collateral assets. The command can be run again: it skips existing slugs and
+updates their icon paths when needed.
 
-```bash
-bun run index.ts
-```
-
-To type check:
-
-```bash
-bun check
-```
-
-This project was created using `bun init` in bun v1.4.3. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+To type check, run `bun check`.
