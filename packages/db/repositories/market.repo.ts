@@ -1,6 +1,32 @@
 import { prisma } from "..";
 
 export const MarketRepo = {
+  listMarkets: async () => {
+    return prisma.market.findMany({
+      select: {
+        id: true,
+        slug: true,
+        imageUrl: true,
+        mark_price: true,
+        last_traded_price: true,
+      },
+      orderBy: { slug: "asc" },
+    });
+  },
+
+  getMarket: async (id: string) => {
+    return prisma.market.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        slug: true,
+        imageUrl: true,
+        mark_price: true,
+        last_traded_price: true,
+      },
+    });
+  },
+
   newMarket: async (slug: string, image_url: string) => {
     const response = await prisma.market.create({
       data: {

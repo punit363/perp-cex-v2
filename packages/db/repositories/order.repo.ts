@@ -4,8 +4,35 @@ import type {
   OrderDBUpdate,
   PositionDBUpdate,
 } from "commons/src/order.type";
+import { OrderStatus } from "commons/src/order.type";
 
 const OrderRepo = {
+  listUserOrders: async (user_id: string, market_id: string, view: "open" | "history") => {
+    return prisma.order.findMany({
+      where: {
+        user_id,
+        market_id,
+        status: { in: view === "open"
+          ? [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
+          : [OrderStatus.FILLED, OrderStatus.CANCELLED] },
+      },
+      orderBy: { updated_at: "desc" },
+      take: 50,
+      select: {
+        order_id: true,
+        side: true,
+        type: true,
+        status: true,
+        price: true,
+        quantity: true,
+        filled: true,
+        leverage: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+  },
+
   upsertOrder: async (order: OrderDBUpdate) => {
     const {
       user_id,

@@ -3,6 +3,41 @@ import { handleError, handleResponse } from "../utils/handler";
 import { AppError } from "../utils/error";
 import { loopback } from "../loopback";
 import type { EngineResponse } from "commons/src";
+import { MarketRepo } from "db/repositories/market.repo";
+
+const list_markets = async (_req: Request, res: Response) => {
+  try {
+    const markets = await MarketRepo.listMarkets();
+    return res.status(200).json(handleResponse("Markets fetched successfully.", 1, {
+      markets: markets.map((market) => ({
+        ...market,
+        mark_price: market.mark_price?.toString() ?? null,
+        last_traded_price: market.last_traded_price?.toString() ?? null,
+      })),
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+const get_market = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const market = await MarketRepo.getMarket(market_id);
+    if (!market) return res.status(404).json(handleError("Market not found", 0));
+    return res.status(200).json(handleResponse("Market fetched successfully.", 1, {
+      market: {
+        ...market,
+        mark_price: market.mark_price?.toString() ?? null,
+        last_traded_price: market.last_traded_price?.toString() ?? null,
+      },
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
 
 const get_depth = async (req: Request, res: Response) => {
   try {
@@ -66,4 +101,4 @@ const get_position = async (req: Request, res: Response) => {
   }
 };
 
-export { get_depth, get_position };
+export { list_markets, get_market, get_depth, get_position };
