@@ -1,4 +1,4 @@
-const engine_response = (message: string, status: number, data?: any) => {
+const engine_response = (message: string, status: number, data?: unknown) => {
   return {
     message: message || "Unrecognised engine request action",
     status: status || 0,

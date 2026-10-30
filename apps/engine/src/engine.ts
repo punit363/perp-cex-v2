@@ -1,10 +1,15 @@
-import { divideRounded, formatFixed, multiplyFixed } from "./math/fixed-point";
-import type { Fill } from "./types";
+import { divideRounded, formatFixed, multiplyFixed, SCALE } from "./math/fixed-point";
+import type {
+  EngineSnapshot,
+  Fill,
+  markPriceMetadata,
+  SnapshotMarket,
+} from "./types";
 import { engine_response } from "./utils";
 import type { EngineCommand } from "./zod/z";
+import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
 import AccountStore from "./accounts";
-import BTree from "sorted-btree";
 import {
   calculateInitialMargin,
   calculateMaintenanceMargin,
@@ -19,41 +24,167 @@ import {
 } from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const SNAPSHOT_PATH = fileURLToPath(new URL("../snapshot.json", import.meta.url));
 
 type CommandOf<Action extends EngineCommand["action"]> = Extract<
   EngineCommand,
   { action: Action }
 >;
 
-//TODO: Add a crash recovery system that has orderbooks from all markets and also feeds the orderbooks
 class Engine {
-  private orderbooks = new Map<string, Orderbook>();
-  private accounts = new AccountStore();
-  private markPrices = new Map<string, bigint>();
-  private markPriceMetadata = new Map<
-    string,
-    { producer_id: string; source_timestamp: number; sequence: bigint }
-  >();
-  private readonly MAX_MARK_PRICE_AGE_MS = 5_000;
-  private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS = 1_000;
+  private orderbooks: Map<string, Orderbook> = new Map();
+  private accounts = new AccountStore([]);
+  private markPrices: Map<string, bigint> = new Map();
+  private markPriceMetadata: Map<string, markPriceMetadata> = new Map();
+  private positionUsersByMarket: Map<string, Set<string>> = new Map(); //market->users>
+  private readonly MAX_MARK_PRICE_AGE_MS;
+  private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS;
   private MAINTENANCE_MARGIN_RATE: bigint;
-  private positionUsersByMarket = new Map<string, Set<string>>(); //market->users>
+  private lastAppliedStreamId = "0-0";
+  private replayTimestamp: number | null = null;
 
-  constructor() {
-    //Logic to read from recovery system
-    this.orderbooks.set(
-      "market123",
-      new Orderbook(new BTree(), new BTree(), new Map(), 0n, "")
-    );
-    this.accounts.getOrCreate("user123");
-    this.positionUsersByMarket.set(
-      "market123",
-      new Set(["user-1", "user-2", "user-3"])
-    );
+  private constructor(marketIds: string[]) {
+    this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
+    this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
+      MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
+
+    if (existsSync(SNAPSHOT_PATH)) {
+      const parsedSnapshot = EngineSnapshotSchema.safeParse(
+        JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"))
+      );
+      if (!parsedSnapshot.success) {
+        const details = parsedSnapshot.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        throw new Error(`Cannot restore invalid engine snapshot: ${details}`);
+      }
+      const snapshot: EngineSnapshot = parsedSnapshot.data;
+      this.lastAppliedStreamId = snapshot.last_applied_stream_id;
+      snapshot.mark_prices.forEach((mark) => {
+        this.markPrices.set(mark.market_id, BigInt(mark.price));
+        this.markPriceMetadata.set(mark.market_id, {
+          producer_id: mark.producer_id,
+          source_timestamp: mark.source_timestamp,
+          sequence: BigInt(mark.sequence),
+        });
+      });
+
+      this.accounts = new AccountStore(snapshot.accounts);
+
+      snapshot.markets.forEach((market_data) => {
+        const orderbook = new Orderbook(market_data);
+        this.orderbooks.set(market_data.market_id, orderbook);
+        this.positionUsersByMarket.set(market_data.market_id, new Set());
+
+        market_data.orders.forEach((order) => {
+          const account = this.accounts.get(order.user_id);
+          if (!account) {
+            throw new Error(`Snapshot order ${order.order_id} has no account`);
+          }
+          account.orders.add(order.order_id);
+        });
+      });
+
+      snapshot.accounts.forEach((account) => {
+        account.positions.forEach((position) => {
+          let positionUsers = this.positionUsersByMarket.get(position.market_id);
+          if (!positionUsers) {
+            positionUsers = new Set<string>();
+            this.positionUsersByMarket.set(position.market_id, positionUsers);
+          }
+          positionUsers.add(account.user_id);
+        });
+      });
+    }
+
+    for (const market_id of marketIds) {
+      if (!this.orderbooks.has(market_id)) {
+        this.orderbooks.set(
+          market_id,
+          new Orderbook({
+            market_id,
+            last_traded_price: "0",
+            last_trade_id: "",
+            orders: [],
+          })
+        );
+        this.positionUsersByMarket.set(market_id, new Set());
+      }
+    }
+
+    if (this.orderbooks.size === 0) {
+      throw new Error("No markets available to initialize the engine");
+    }
+    this.captureSnapshot();
   }
 
-  processEngineOrder = (request: EngineCommand): EngineResponse => {
+  static async create(): Promise<Engine> {
+    const { MarketRepo } = await import("db/repositories/market.repo");
+    const marketIds = (await MarketRepo.listMarkets()).map((market) => market.market_id);
+    return new Engine(marketIds);
+  }
+
+  getLastAppliedStreamId(): string {
+    return this.lastAppliedStreamId;
+  }
+
+  recordAppliedStreamId(streamId: string): void {
+    this.lastAppliedStreamId = streamId;
+  }
+
+  captureSnapshot() {
+    setInterval(() => {
+      const snapshot: EngineSnapshot = {
+        version: 2,
+        snapshot_time: Date.now(),
+        scale: Number(SCALE),
+        last_applied_stream_id: this.lastAppliedStreamId,
+        markets: [],
+        accounts: this.accounts.snapshotAccount(),
+        mark_prices: Array.from(this.markPriceMetadata, ([market_id, metadata]) => {
+          const price = this.markPrices.get(market_id);
+          if (price === undefined) {
+            throw new Error(`Missing mark price for market ${market_id}`);
+          }
+          return {
+            market_id,
+            price: String(price),
+            producer_id: metadata.producer_id,
+            source_timestamp: metadata.source_timestamp,
+            sequence: String(metadata.sequence),
+          };
+        }),
+      };
+
+      this.orderbooks.forEach((orderbook, market_id) => {
+        const { last_traded_price, last_trade_id } =
+          orderbook.fetchMarketData();
+
+        const market_data: SnapshotMarket = {
+          market_id,
+          last_traded_price: String(last_traded_price),
+          last_trade_id: String(last_trade_id),
+          orders: orderbook.snapshotOrderbook(),
+        };
+
+        snapshot.markets.push(market_data);
+      });
+
+      const temporaryPath = `${SNAPSHOT_PATH}.${process.pid}.tmp`;
+      writeFileSync(temporaryPath, JSON.stringify(snapshot));
+      renameSync(temporaryPath, SNAPSHOT_PATH);
+    }, 3000);
+  }
+
+  processEngineOrder = (
+    request: EngineCommand,
+    replayTimestamp?: number
+  ): EngineResponse => {
+    this.replayTimestamp = replayTimestamp ?? null;
     try {
       switch (request.action) {
         case "ONRAMP":
@@ -79,6 +210,8 @@ class Engine {
       console.log(error);
       const err = error instanceof Error ? error : new Error(String(error));
       return engine_response(err.message, 0);
+    } finally {
+      this.replayTimestamp = null;
     }
   };
 
@@ -129,7 +262,7 @@ class Engine {
       !mark_price ||
       !mark_price_metadata ||
       mark_price < 0 ||
-      Date.now() - mark_price_metadata?.source_timestamp >
+      (this.replayTimestamp ?? Date.now()) - mark_price_metadata?.source_timestamp >
         this.MAX_MARK_PRICE_AGE_MS
     ) {
       throw new Error("Fresh mark price does not exist");
@@ -177,7 +310,9 @@ class Engine {
         let position_type = current_position?.type;
         let position_quantity = current_position?.quantity ?? 0n;
         const order_position_type =
-          order.side === OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
+          order.side === OrderSide.SELL
+            ? PositionType.SHORT
+            : PositionType.LONG;
         initial_margin = 0n;
 
         for (const preview_fill of orderbook.previewMarketOrder({
@@ -929,7 +1064,7 @@ class Engine {
 
     const parsed_sequence = BigInt(sequence);
     const latest_metadata = this.markPriceMetadata.get(market_id);
-    const now = Date.now();
+    const now = this.replayTimestamp ?? Date.now();
 
     if (
       source_timestamp < now - this.MAX_MARK_PRICE_AGE_MS ||

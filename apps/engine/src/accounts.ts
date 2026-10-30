@@ -1,7 +1,41 @@
-import type { UserAccount } from "./types";
+import type {
+  Position,
+  SnapshotAccount,
+  SnapshotPosition,
+  UserAccount,
+} from "./types";
 
 class AccountStore {
   private accounts = new Map<string, UserAccount>();
+
+  constructor(accounts: SnapshotAccount[]) {
+    accounts.forEach((account) => {
+      const positions = new Map<string, Position>(
+        account.positions.map((position): [string, Position] => {
+          const position_data: Position = {
+            market_id: position.market_id,
+            type: position.type,
+            quantity: BigInt(position.quantity),
+            reserved_margin: BigInt(position.reserved_margin),
+            avg_entry_price: BigInt(position.avg_entry_price),
+            unrealized_pnl: BigInt(position.unrealized_pnl),
+            funding_accrued: BigInt(position.funding_accrued),
+          };
+          return [position.market_id, position_data];
+        })
+      );
+
+      this.accounts.set(account.user_id, {
+        user_id: account.user_id,
+        collateral: {
+          available: BigInt(account.collateral.available),
+          reserved: BigInt(account.collateral.reserved),
+        },
+        positions,
+        orders: new Set(),
+      });
+    });
+  }
 
   get(user_id: string): UserAccount | undefined {
     return this.accounts.get(user_id);
@@ -19,6 +53,33 @@ class AccountStore {
       this.accounts.set(user_id, account);
     }
     return account;
+  }
+
+  snapshotAccount(): SnapshotAccount[] {
+    const accounts: SnapshotAccount[] = [];
+    this.accounts.forEach((acc) => {
+      const user: SnapshotAccount = {
+        user_id: acc.user_id,
+        collateral: {
+          reserved: String(acc.collateral.reserved),
+          available: String(acc.collateral.available),
+        },
+        positions: Array.from(acc.positions, ([_, position]) => {
+          const position_data: SnapshotPosition = {
+            market_id: position.market_id,
+            type: position.type,
+            quantity: String(position.quantity),
+            reserved_margin: String(position.reserved_margin),
+            avg_entry_price: String(position.avg_entry_price),
+            unrealized_pnl: String(position.unrealized_pnl),
+            funding_accrued: String(position.funding_accrued),
+          };
+          return position_data;
+        }),
+      };
+      accounts.push(user);
+    });
+    return accounts;
   }
 
   credit(user_id: string, amount: bigint): void {

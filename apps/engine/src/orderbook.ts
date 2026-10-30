@@ -1,5 +1,13 @@
 import BTree from "sorted-btree";
-import type { Fill, Order, OrderNode, PriceLevel } from "./types";
+import type {
+  Fill,
+  Order,
+  OrderNode,
+  PriceLevel,
+  RestingOrder,
+  SnapshotMarket,
+  SnapshotOrder,
+} from "./types";
 import { divideFixed, formatFixed, multiplyFixed } from "./math/fixed-point";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
@@ -14,19 +22,25 @@ class Orderbook {
   private orders = new Map<string, OrderNode>();
   private lastTradedPrice: bigint;
   private lastTradeId: string;
+  private marketId: string;
 
-  constructor(
-    asks: BTree<bigint, PriceLevel>,
-    bids: BTree<bigint, PriceLevel>,
-    orders: Map<string, OrderNode>,
-    lastTradedPrice: bigint,
-    lastTradeId: string
-  ) {
-    this.asks = asks;
-    this.bids = bids;
-    this.orders = orders;
-    this.lastTradedPrice = lastTradedPrice;
-    this.lastTradeId = lastTradeId;
+  constructor(marketData: SnapshotMarket) {
+    this.marketId = marketData.market_id;
+    this.lastTradedPrice = BigInt(marketData.last_traded_price);
+    this.lastTradeId = marketData.last_trade_id;
+
+    marketData.orders.forEach((order) => {
+      const order_node: RestingOrder = {
+        order_id: order.order_id,
+        user_id: order.user_id,
+        quantity: BigInt(order.quantity),
+        filled: BigInt(order.filled),
+        leverage: BigInt(order.leverage),
+        side: order.side,
+        price: BigInt(order.price),
+      };
+      this.insertOrder(order_node);
+    });
   }
 
   private comparePrice(a: bigint, b: bigint) {
@@ -57,71 +71,65 @@ class Orderbook {
     };
   }
 
-  insertOrder(order: Order) {
+  insertOrder(order: RestingOrder) {
     const price = order.price;
     const quantity = order.quantity;
     const filled = order.filled;
 
-    if (order.type == OrderType.LIMIT) {
-      if (price <= 0n || quantity <= 0n) {
-        throw new Error("Price and Quatity cannot be negative");
-      }
-      let price_level;
-
-      if (order.side == OrderSide.SELL) {
-        price_level = this.asks.get(price);
-        if (!price_level) {
-          price_level = {
-            price: order.price,
-            remaining_qty: 0n,
-            head: null,
-            tail: null,
-          };
-          this.asks.set(price, price_level);
-        }
-      } else if (order.side == OrderSide.BUY) {
-        price_level = this.bids.get(order.price);
-        if (!price_level) {
-          price_level = {
-            price: order.price,
-            remaining_qty: 0n,
-            head: null,
-            tail: null,
-          };
-        }
-        this.bids.set(price, price_level);
-      } else {
-        throw new Error("Order side must be buy or sell");
-      }
-
-      price_level.remaining_qty += quantity - filled;
-
-      const order_node: OrderNode = {
-        order_id: order.order_id,
-        user_id: order.user_id,
-        quantity,
-        filled: order.filled,
-        leverage: order.leverage,
-        level: price_level,
-        side: order.side,
-        prev: null,
-        next: null,
-      };
-
-      order_node.prev = price_level.tail;
-      if (price_level.tail) {
-        price_level.tail.next = order_node;
-      } else {
-        price_level.head = order_node;
-      }
-      price_level.tail = order_node;
-
-      this.orders.set(order_node.order_id, order_node);
-    } else if (order.type == "MARKET") {
-      //TODO:To be implemented
-    } else {
-      throw new Error("Order type must be limit or market");
+    if (price <= 0n || quantity <= 0n) {
+      throw new Error("Price and Quatity cannot be negative");
     }
+    let price_level;
+
+    if (order.side == OrderSide.SELL) {
+      price_level = this.asks.get(price);
+      if (!price_level) {
+        price_level = {
+          price: order.price,
+          remaining_qty: 0n,
+          head: null,
+          tail: null,
+        };
+        this.asks.set(price, price_level);
+      }
+    } else if (order.side == OrderSide.BUY) {
+      price_level = this.bids.get(order.price);
+      if (!price_level) {
+        price_level = {
+          price: order.price,
+          remaining_qty: 0n,
+          head: null,
+          tail: null,
+        };
+      }
+      this.bids.set(price, price_level);
+    } else {
+      throw new Error("Order side must be buy or sell");
+    }
+
+    price_level.remaining_qty += BigInt(quantity) - BigInt(filled);
+
+    const order_node: OrderNode = {
+      order_id: order.order_id,
+      user_id: order.user_id,
+      quantity,
+      filled: order.filled,
+      leverage: order.leverage,
+      level: price_level,
+      side: order.side,
+      prev: null,
+      next: null,
+    };
+
+    order_node.prev = price_level.tail;
+    if (price_level.tail) {
+      price_level.tail.next = order_node;
+    } else {
+      price_level.head = order_node;
+    }
+    price_level.tail = order_node;
+
+    this.orders.set(order_node.order_id, order_node);
   }
 
   cancelOrder(cancel: { user_id: string; order_id: string }) {
@@ -224,6 +232,52 @@ class Orderbook {
 
     return depth;
   }
+
+  snapshotOrderbook(): SnapshotOrder[] {
+    const orders: SnapshotOrder[] = [];
+
+    for (const [price, level] of this.asks.entries()) {
+      if (level.remaining_qty <= 0) continue;
+
+      let current_node = level.head;
+      while (current_node) {
+        const order_node: SnapshotOrder = {
+          order_id: current_node.order_id,
+          user_id: current_node.user_id,
+          quantity: String(current_node.quantity),
+          filled: String(current_node.filled),
+          leverage: String(current_node.leverage),
+          side: current_node.side,
+          price: String(price),
+        };
+        orders.push(order_node);
+        current_node = current_node.next;
+      }
+    }
+
+    for (const [price, level] of this.bids.entriesReversed()) {
+      if (level.remaining_qty <= 0) continue;
+
+      let current_node = level.head;
+      while (current_node) {
+        const order_node: SnapshotOrder = {
+          order_id: current_node.order_id,
+          user_id: current_node.user_id,
+          quantity: String(current_node.quantity),
+          filled: String(current_node.filled),
+          leverage: String(current_node.leverage),
+          side: current_node.side,
+          price: String(price),
+        };
+        orders.push(order_node);
+        current_node = current_node.next;
+      }
+    }
+
+    return orders;
+  }
+
+  recreateOrderbookState() {}
 
   previewMarketOrder(order: Order): { price: bigint; quantity: bigint }[] {
     if (order.type !== OrderType.MARKET) {

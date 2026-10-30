@@ -1,10 +1,11 @@
 import Engine from "./engine";
 import RedisHandler from "./redis";
 
-const engine = new Engine();
+const engine = await Engine.create();
 const redis = new RedisHandler();
 
-await redis.readEngineRequestStream(async (request) => {
-  const response = engine.processEngineOrder(request);
-  return response;
-});
+await redis.readEngineRequestStream(
+  (request, replayTimestamp) => engine.processEngineOrder(request, replayTimestamp),
+  engine.getLastAppliedStreamId(),
+  (streamId) => engine.recordAppliedStreamId(streamId)
+);
