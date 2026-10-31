@@ -71,6 +71,10 @@ class Orderbook {
     };
   }
 
+  hasOrder(order_id: string): boolean {
+    return this.orders.has(order_id);
+  }
+
   insertOrder(order: RestingOrder) {
     const price = order.price;
     const quantity = order.quantity;
@@ -759,7 +763,7 @@ class Orderbook {
       filled,
       net_amt,
       rem_qty: quantity - filled,
-      fills,
+      fills: fills || [],
     };
   }
 }
