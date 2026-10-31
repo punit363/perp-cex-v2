@@ -71,6 +71,15 @@ class Orderbook {
     };
   }
 
+  public getBestPrices() {
+    const bid = this.bids.nextLowerPair(undefined)?.[0];
+    const ask = this.asks.nextHigherPair(undefined)?.[0];
+    return {
+      ...(bid !== undefined && { best_bid: formatFixed(bid) }),
+      ...(ask !== undefined && { best_ask: formatFixed(ask) }),
+    };
+  }
+
   hasOrder(order_id: string): boolean {
     return this.orders.has(order_id);
   }

@@ -71,6 +71,8 @@ class Engine {
   private commandEvents: {
     db: DBEventDraft[];
     ws: WSEventDraft[];
+    changedBooks: Set<string>;
+    changedTickers: Set<string>;
   } | null = null;
 
   private constructor(marketIds: string[]) {
@@ -217,10 +219,10 @@ class Engine {
     }, 3000);
   }
 
-  processEngineOrder = (
+  processEngineOrder(
     request: EngineCommand,
     replayTimestamp?: number
-  ): EngineResponse => {
+  ): EngineResponse {
     this.replayTimestamp = replayTimestamp ?? null;
     try {
       switch (request.action) {
@@ -250,19 +252,50 @@ class Engine {
     } finally {
       this.replayTimestamp = null;
     }
-  };
+  }
 
-  processEngineCommand = (
+  processEngineCommand(
     request: EngineCommand,
     replayTimestamp?: number,
     sourceMessageId?: string
-  ): EngineCommandResult => {
-    const events = { db: [] as DBEventDraft[], ws: [] as WSEventDraft[] };
+  ): EngineCommandResult {
+    const events = {
+      db: [] as DBEventDraft[],
+      ws: [] as WSEventDraft[],
+      changedBooks: new Set<string>(),
+      changedTickers: new Set<string>(),
+    };
     this.commandEvents = events;
     this.currentSourceMessageId = sourceMessageId ?? randomUUID();
     this.liquidationOrderSequence = 0;
     try {
       const response = this.processEngineOrder(request, replayTimestamp);
+      for (const market_id of events.changedBooks) {
+        const orderbook = this.orderbooks.get(market_id);
+        if (!orderbook) continue;
+        this.emitWsEvent({
+          event_type: "BOOK",
+          data: { market_id, ...orderbook.getDepth() },
+        });
+      }
+      for (const market_id of events.changedTickers) {
+        const orderbook = this.orderbooks.get(market_id);
+        if (!orderbook) continue;
+        const { last_trade_id, last_traded_price } = orderbook.fetchMarketData();
+        const mark_price = this.markPrices.get(market_id);
+        this.emitWsEvent({
+          event_type: "TICKER",
+          data: {
+            market_id,
+            ...(mark_price !== undefined && { mark_price: formatFixed(mark_price) }),
+            ...(last_trade_id && {
+              last_trade_id,
+              last_traded_price: formatFixed(last_traded_price),
+            }),
+            ...orderbook.getBestPrices(),
+          },
+        });
+      }
       // Project all changes from one command together: orders must exist before fills.
       const dbEvents: DBEventDraft[] =
         events.db.length > 1
@@ -299,7 +332,7 @@ class Engine {
       this.commandEvents = null;
       this.currentSourceMessageId = null;
     }
-  };
+  }
 
   private emitDbEvent(event: DBEventDraft): void {
     this.commandEvents?.db.push(event);
@@ -307,6 +340,26 @@ class Engine {
 
   private emitWsEvent(event: WSEventDraft): void {
     this.commandEvents?.ws.push(event);
+  }
+
+  private markBookChanged(market_id: string): void {
+    this.commandEvents?.changedBooks.add(market_id);
+    this.commandEvents?.changedTickers.add(market_id);
+  }
+
+  private emitTrades(market_id: string, taker_side: OrderSide, fills: Fill[]): void {
+    for (const fill of fills) {
+      this.emitWsEvent({
+        event_type: "TRADE",
+        data: {
+          market_id,
+          trade_id: fill.trade_id,
+          price: formatFixed(fill.price),
+          quantity: formatFixed(fill.filled),
+          taker_side,
+        },
+      });
+    }
   }
 
   private onramp(request: CommandOf<"ONRAMP">): EngineResponse {
@@ -468,6 +521,10 @@ class Engine {
         leverage,
         ...order,
       });
+      if (order.type === OrderType.LIMIT || result.fills.length > 0) {
+        this.markBookChanged(market_id);
+      }
+      this.emitTrades(market_id, order.side, result.fills);
 
       if (order.type == OrderType.LIMIT) {
         if (
@@ -938,6 +995,7 @@ class Engine {
     if (!cancelResult) {
       throw new Error("Cancel order failed");
     }
+    this.markBookChanged(request.market_id);
 
     const { order_id, rem_qty, price, leverage } = cancelResult;
     const notional = calculateNotional(price, rem_qty);
@@ -1082,6 +1140,10 @@ class Engine {
         side,
         liquidation_quantity
       );
+      if (response.fills.length > 0) {
+        this.markBookChanged(market_id);
+        this.emitTrades(market_id, side, response.fills);
+      }
 
       const liquidation_risks = new Set<string>();
       let net_margin_recovered = 0n;
@@ -1348,6 +1410,10 @@ class Engine {
     const { market_id, mark_price, source_timestamp, producer_id, sequence } =
       request;
 
+    if (!this.orderbooks.has(market_id)) {
+      return engine_response("Incorrect Market ID", 0);
+    }
+
     if (mark_price <= 0) {
       return engine_response("Invalid mark price", 0);
     }
@@ -1375,6 +1441,7 @@ class Engine {
       source_timestamp,
       sequence: parsed_sequence,
     });
+    this.commandEvents?.changedTickers.add(market_id);
 
     const users_with_position = this.positionUsersByMarket.get(market_id);
 
