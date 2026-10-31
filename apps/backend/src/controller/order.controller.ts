@@ -5,6 +5,7 @@ import type { EngineResponse, RequestToEngine } from "commons/src/index";
 import { loopback } from "../loopback";
 import { OrderStatus } from "commons/src/order.type";
 import OrderRepo from "db/repositories/order.repo";
+import { generate_order_id } from "../utils";
 
 async function list_orders(req: Request, res: Response) {
   try {
@@ -35,7 +36,7 @@ async function place_order(req: Request, res: Response) {
     const user_id = req.user_id as string;
 
     const { market_id, price, quantity, side, type, leverage } = req.body;
-    const order_id = "odr_" + Math.random().toString();
+    const order_id = generate_order_id();
 
     const engine_request: RequestToEngine = {
       action: "PLACE_ORDER",

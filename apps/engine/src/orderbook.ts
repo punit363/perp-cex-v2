@@ -358,7 +358,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order.order_id, fills.length),
             maker_order_id: order_id,
             maker_user_id: user_id,
             taker_order_id: order.order_id,
@@ -422,7 +422,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order.order_id, fills.length),
             maker_order_id: order_id,
             maker_user_id: user_id,
             taker_order_id: order.order_id,
@@ -498,7 +498,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order.order_id, fills.length),
             maker_order_id: order_id,
             maker_user_id: user_id,
             taker_order_id: order.order_id,
@@ -577,7 +577,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order.order_id, fills.length),
             maker_order_id: order_id,
             maker_user_id: user_id,
             taker_order_id: order.order_id,
@@ -681,7 +681,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order_id, fills.length),
             maker_order_id: current_node.order_id,
             maker_user_id: current_node.user_id,
             taker_order_id: order_id,
@@ -733,7 +733,7 @@ class Orderbook {
           }
 
           const fill: Fill = {
-            trade_id: generate_trade_id(),
+            trade_id: generate_trade_id(order_id, fills.length),
             maker_order_id: current_node.order_id,
             maker_user_id: current_node.user_id,
             taker_order_id: order_id,
