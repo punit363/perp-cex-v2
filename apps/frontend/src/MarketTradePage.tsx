@@ -85,23 +85,26 @@ function PriceChart({ points, current, connected }: { points: PricePoint[]; curr
 }
 
 function BookSide({ levels, side, onChoosePrice }: { levels: Level[]; side: "ask" | "bid"; onChoosePrice: (price: string) => void }) {
-  const visible = side === "ask" ? levels.slice(0, 8).reverse() : levels.slice(0, 8);
+  const visible = side === "ask" ? levels.slice(0, 12).reverse() : levels.slice(0, 12);
   const maximum = Math.max(...visible.map((level) => Number(level.quantity)), 1);
   return <div className={`trade-book__side trade-book__side--${side}`}>
     {visible.length ? visible.map((level, index) => <button type="button" key={`${level.price}-${index}`} onClick={() => onChoosePrice(level.price)} title="Use this price in the limit order form"><span className="trade-book__bar" style={{ width: `${Math.min(100, Number(level.quantity) / maximum * 100)}%` }} /><span className="trade-book__price">{grouped(level.price)}</span><span>{grouped(level.quantity)}</span></button>) : <div className="trade-book__empty">No {side === "ask" ? "asks" : "bids"} available</div>}
   </div>;
 }
 
-function OrderBook({ depth, loading, error, current, onChoosePrice, onRefresh }: { depth: Depth | null; loading: boolean; error: string; current: string | null; onChoosePrice: (price: string) => void; onRefresh: () => void }) {
+function OrderBook({ depth, loading, error, current, trades, onChoosePrice, onRefresh }: { depth: Depth | null; loading: boolean; error: string; current: string | null; trades: LiveTrade[]; onChoosePrice: (price: string) => void; onRefresh: () => void }) {
+  const [view, setView] = useState<"book" | "trades">("book");
   return <section className="trade-book" aria-label="Live order book">
-    <div className="trade-panel__heading"><div><span className="trade-panel__eyebrow">MARKET DEPTH</span><h2>Order book</h2></div><button type="button" className="trade-icon-button" onClick={onRefresh} aria-label="Refresh order book" title="Refresh order book">↻</button></div>
-    <div className="trade-book__columns"><span>PRICE</span><span>SIZE</span></div>
-    {loading && !depth ? <div className="trade-book__loading">Loading order book…</div> : <>
-      <BookSide levels={depth?.asks ?? []} side="ask" onChoosePrice={onChoosePrice} />
-      <div className="trade-book__mid"><strong>{current ? grouped(current) : "—"}</strong><span>LAST PRICE</span></div>
-      <BookSide levels={depth?.bids ?? []} side="bid" onChoosePrice={onChoosePrice} />
-    </>}
-    {error && <p className="trade-book__notice" role="status">{error}</p>}
+    <div className="trade-book__header"><div className="trade-book__tabs" role="tablist" aria-label="Market activity"><button type="button" role="tab" aria-selected={view === "book"} className={view === "book" ? "is-active" : ""} onClick={() => setView("book")}>Book</button><button type="button" role="tab" aria-selected={view === "trades"} className={view === "trades" ? "is-active" : ""} onClick={() => setView("trades")}>Trades</button></div>{view === "book" && <button type="button" className="trade-icon-button" onClick={onRefresh} aria-label="Refresh order book" title="Refresh order book">↻</button>}</div>
+    {view === "book" ? <>
+      <div className="trade-book__columns"><span>PRICE</span><span>SIZE</span></div>
+      {loading && !depth ? <div className="trade-book__loading">Loading order book…</div> : <>
+        <BookSide levels={depth?.asks ?? []} side="ask" onChoosePrice={onChoosePrice} />
+        <div className="trade-book__mid"><strong>{current ? grouped(current) : "—"}</strong><span>LAST PRICE</span></div>
+        <BookSide levels={depth?.bids ?? []} side="bid" onChoosePrice={onChoosePrice} />
+      </>}
+      {error && <p className="trade-book__notice" role="status">{error}</p>}
+    </> : <div className="trade-book__trades" role="tabpanel"><div className="trade-book__trade-head"><span>PRICE</span><span>SIZE</span><span>TIME</span></div>{trades.length ? trades.slice(0, 12).map((trade) => <div className="trade-book__trade" key={trade.trade_id}><span className={trade.taker_side === "BUY" ? "is-buy" : "is-sell"}>{grouped(trade.price)}</span><span>{grouped(trade.quantity)}</span><time>{new Date(trade.time).toLocaleTimeString()}</time></div>) : <div className="trade-book__empty-trades">Trades will appear here as they happen.</div>}</div>}
   </section>;
 }
 
@@ -150,7 +153,6 @@ function OrderForm({ marketId, listed, token, currentPrice, selectedPrice, onSig
     : null;
 
   return <section className="trade-order" aria-label="Place order">
-    <div className="trade-panel__heading"><div><span className="trade-panel__eyebrow">TRADE EXECUTION</span><h2>Place order</h2></div></div>
     <div className="trade-order__sides" role="group" aria-label="Order side"><button type="button" className={side === "BUY" ? "is-buy" : ""} onClick={() => setSide("BUY")}>Buy / Long</button><button type="button" className={side === "SELL" ? "is-sell" : ""} onClick={() => setSide("SELL")}>Sell / Short</button></div>
     <div className="trade-order__types" role="group" aria-label="Order type"><button type="button" aria-pressed={type === "LIMIT"} className={type === "LIMIT" ? "is-active" : ""} onClick={() => setType("LIMIT")}>Limit</button><button type="button" aria-pressed={type === "MARKET"} className={type === "MARKET" ? "is-active" : ""} onClick={() => setType("MARKET")}>Market</button></div>
     <form onSubmit={submit}>
@@ -170,7 +172,9 @@ function OrderForm({ marketId, listed, token, currentPrice, selectedPrice, onSig
 }
 
 function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged }: { marketId: string; listed: boolean; token: string | null; refreshKey: number; onSignIn: () => void; onChanged: () => void }) {
+  const pageSize = 3;
   const [tab, setTab] = useState<AccountTab>("open");
+  const [page, setPage] = useState(0);
   const [orders, setOrders] = useState<Order[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
   const [loading, setLoading] = useState(false);
@@ -178,6 +182,8 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   const [actionError, setActionError] = useState("");
   const [localRefresh, setLocalRefresh] = useState(0);
   const [canceling, setCanceling] = useState<string | null>(null);
+
+  useEffect(() => { setPage(0); }, [marketId, tab]);
 
   useEffect(() => {
     if (!token || !listed) { setOrders([]); setPosition(null); setError(""); return; }
@@ -203,6 +209,10 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
     finally { setCanceling(null); }
   }
 
+  const lastPage = Math.max(0, Math.ceil(orders.length / pageSize) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const visibleOrders = orders.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
   return <section className="trade-account" aria-label="Your market activity">
     <div className="trade-account__header"><div className="trade-account__tabs" role="tablist" aria-label="Market account data">
       <button type="button" role="tab" aria-selected={tab === "open"} className={tab === "open" ? "is-active" : ""} onClick={() => setTab("open")}>Open orders</button>
@@ -215,14 +225,14 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
       : error ? <div className="trade-account__empty is-error" role="alert">{error}</div>
       : tab === "positions" ? position ? <div className="trade-account__position"><div><span>TYPE</span><strong className={position.type === "LONG" ? "is-buy" : "is-sell"}>{position.type}</strong></div><div><span>QUANTITY</span><strong>{grouped(position.quantity)}</strong></div><div><span>AVG ENTRY</span><strong>{grouped(position.avg_entry_price)}</strong></div><div><span>MARGIN</span><strong>{grouped(position.reserved_margin)}</strong></div><div><span>UNREALIZED PNL</span><strong>{grouped(position.unrealized_pnl)}</strong></div><div><span>FUNDING</span><strong>{grouped(position.funding_accrued)}</strong></div></div>
         : <div className="trade-account__empty">No position in this market.</div>
-      : orders.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>ORDER</th><th>SIDE</th><th>TYPE</th><th>PRICE</th><th>QTY / FILLED</th><th>LEVERAGE</th><th>STATUS</th><th>{tab === "open" ? "ACTION" : "UPDATED"}</th></tr></thead><tbody>{orders.map((order) => <tr key={order.order_id}><td title={order.order_id}>{order.order_id.slice(0, 13)}…</td><td className={order.side === "BUY" ? "is-buy" : "is-sell"}>{order.side}</td><td>{order.type}</td><td>{order.type === "MARKET" ? "Market" : formatScaled(order.price)}</td><td>{formatScaled(order.quantity)} / {formatScaled(order.filled)}</td><td>{formatScaled(order.leverage)}×</td><td>{order.status.replaceAll("_", " ")}</td><td>{tab === "open" ? <button type="button" className="trade-account__cancel" disabled={canceling === order.order_id} onClick={() => void cancelOrder(order.order_id)}>{canceling === order.order_id ? "Canceling…" : "Cancel"}</button> : new Date(order.updated_at).toLocaleString()}</td></tr>)}</tbody></table></div>
+      : orders.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>ORDER</th><th>SIDE</th><th>TYPE</th><th>PRICE</th><th>QTY / FILLED</th><th>LEVERAGE</th><th>STATUS</th><th>{tab === "open" ? "ACTION" : "UPDATED"}</th></tr></thead><tbody>{visibleOrders.map((order) => <tr key={order.order_id}><td title={order.order_id}>{order.order_id.slice(0, 13)}…</td><td className={order.side === "BUY" ? "is-buy" : "is-sell"}>{order.side}</td><td>{order.type}</td><td>{order.type === "MARKET" ? "Market" : formatScaled(order.price)}</td><td>{formatScaled(order.quantity)} / {formatScaled(order.filled)}</td><td>{formatScaled(order.leverage)}×</td><td>{order.status.replaceAll("_", " ")}</td><td>{tab === "open" ? <button type="button" className="trade-account__cancel" disabled={canceling === order.order_id} onClick={() => void cancelOrder(order.order_id)}>{canceling === order.order_id ? "Canceling…" : "Cancel"}</button> : new Date(order.updated_at).toLocaleString()}</td></tr>)}</tbody></table></div>
         : <div className="trade-account__empty">No {tab === "open" ? "open orders" : "order history"} for this market.</div>}
     {actionError && <p className="trade-account__error" role="alert">{actionError}</p>}
-    {token && listed && <p className="trade-account__foot">Open orders and history come from the database and may update shortly after an engine response. Showing the latest 50.</p>}
+    {token && listed && tab !== "positions" && orders.length > 0 && <div className="trade-account__pager"><span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, orders.length)} of {orders.length}</span><div><button type="button" onClick={() => setPage(Math.max(0, currentPage - 1))} disabled={currentPage === 0} aria-label="Previous orders">←</button><button type="button" onClick={() => setPage(Math.min(lastPage, currentPage + 1))} disabled={currentPage === lastPage} aria-label="Next orders">→</button></div></div>}
   </section>;
 }
 
-export function MarketTradePage({ marketId, token, onBack, onSignIn, onBalanceRefresh }: { marketId: string; token: string | null; onBack: () => void; onSignIn: () => void; onBalanceRefresh: () => void }) {
+export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }: { marketId: string; token: string | null; onSignIn: () => void; onBalanceRefresh: () => void }) {
   const [market, setMarket] = useState<Market | null>(null);
   const [preview, setPreview] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
@@ -315,21 +325,21 @@ export function MarketTradePage({ marketId, token, onBack, onSignIn, onBalanceRe
   const listed = Boolean(market && !preview);
   const current = lastPrice ?? markPrice;
   const icon = icons[label.base];
+  const quoteIcon = icons[label.quote];
 
   return <main className="trade-page">
     <div className="trade-page__inner">
-      <div className="trade-page__breadcrumb"><button type="button" onClick={onBack}>Markets</button><span>›</span><strong>{market?.slug ?? "Market"}</strong></div>
       <div className="trade-market-head">
-        <div className="trade-market-head__pair">{icon ? <img src={icon} alt="" width="48" height="48" /> : <span className="trade-market-head__fallback">↗</span>}<div><span>PERPETUAL MARKET</span><h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1></div></div>
+        <div className="trade-market-head__pair"><div className="trade-market-head__icons">{icon ? <img src={icon} alt="" width="38" height="38" /> : <span className="trade-market-head__fallback">↗</span>}{quoteIcon && <img src={quoteIcon} alt="" width="38" height="38" />}</div><h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1></div>
         <div className="trade-market-head__facts"><div><span>LAST PRICE</span><strong>{lastPrice ? grouped(lastPrice) : "—"}</strong></div><div><span>MARK PRICE</span><strong>{markPrice ? grouped(markPrice) : "—"}</strong></div><div><span>MARKET FEED</span><strong className={feed === "connected" ? "is-connected" : ""}>{preview ? "Preview" : feed === "connected" ? "Live" : feed === "connecting" ? "Connecting" : "Offline"}</strong></div></div>
       </div>
       {(preview || marketError) && <div className="trade-page__notice" role="status">{preview ? "This pair is a visual preview and is not listed for trading yet. Live prices, depth, and orders appear for listed markets." : marketError}</div>}
-      <div className="trade-layout">
+      <div className="trade-workspace">
         <PriceChart points={points} current={current} connected={feed === "connected"} />
-        <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
+        <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
         <OrderForm marketId={marketId} listed={listed} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
+        <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
       </div>
-      <div className="trade-lower"><div className="trade-lower__activity"><AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} /></div><section className="trade-tape" aria-label="Recent live trades"><div className="trade-panel__heading"><div><span className="trade-panel__eyebrow">LIVE SESSION</span><h2>Recent trades</h2></div></div>{trades.length ? <div className="trade-tape__rows">{trades.map((trade) => <div key={trade.trade_id}><span className={trade.taker_side === "BUY" ? "is-buy" : "is-sell"}>{grouped(trade.price)}</span><span>{grouped(trade.quantity)}</span><time>{new Date(trade.time).toLocaleTimeString()}</time></div>)}</div> : <div className="trade-tape__empty">Trades will appear here as they happen.</div>}</section></div>
     </div>
   </main>;
 }

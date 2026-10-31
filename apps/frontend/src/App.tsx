@@ -205,7 +205,7 @@ export function App() {
         </div>
       </header>
 
-      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} onBack={() => navigate("markets")} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} onRefresh={() => { if (session) void loadBalance(session.token); }} onSignIn={showSignIn} /> : <main className="landing">
+      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} onRefresh={() => { if (session) void loadBalance(session.token); }} onSignIn={showSignIn} /> : <main className="landing">
         <section className="hero-panel" aria-labelledby="hero-heading">
           <div className="hero-panel__glow" aria-hidden="true" />
           <div className="hero-panel__inner">
