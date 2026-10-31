@@ -315,6 +315,23 @@ class Engine {
     }
 
     this.accounts.credit(request.user_id, request.amount);
+    const account = this.accounts.getOrCreate(request.user_id);
+    this.emitDbEvent({
+      event_type: "BALANCE_CHANGE",
+      changes: {
+        balances: [
+          {
+            user_id: request.user_id,
+            available: account.collateral.available.toString(),
+            reserved: account.collateral.reserved.toString(),
+          },
+        ],
+        orders: [],
+        fills: [],
+        positions: [],
+        market_data: [],
+      },
+    });
     return engine_response("Onramp successfull", 1);
   }
 
