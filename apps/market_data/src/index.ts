@@ -1,13 +1,16 @@
 import MarketData from "./market_data";
 import RedisHandler from "./redis";
 import type { MarkPriceUpdate } from "./type";
+import { MarketRepo } from "db/repositories/market.repo";
 
 const market_data = new MarketData();
 
 const SAMPLE_INTERVAL_MS = 100;
 const MAX_QUOTE_AGE_MS = 1_000;
 const SOURCE_MARKET_ID = "BTC-USD";
-const ENGINE_MARKET_ID = "market123";
+const market = (await MarketRepo.listMarkets()).find(({ slug }) => slug === "BTC-USDT");
+if (!market) throw new Error("BTC-USDT must be listed before starting market data");
+const ENGINE_MARKET_ID = market.market_id;
 const PRODUCER_ID = crypto.randomUUID();
 let markPriceSequence = 0;
 

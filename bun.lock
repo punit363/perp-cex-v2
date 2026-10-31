@@ -88,6 +88,7 @@
     "apps/market_data": {
       "name": "market_data",
       "dependencies": {
+        "db": "workspace:*",
         "redis": "^6.3.0",
       },
       "devDependencies": {
