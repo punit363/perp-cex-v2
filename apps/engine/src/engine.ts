@@ -928,6 +928,10 @@ class Engine {
     if (!orderbook) {
       throw new Error("Incorrect Market ID");
     }
+    const account = this.accounts.get(request.user_id);
+    if (!account) {
+      throw new Error("User Account does not exist");
+    }
 
     const cancelResult = orderbook.cancelOrder(cancel_request);
     if (!cancelResult) {
@@ -938,7 +942,33 @@ class Engine {
     const notional = calculateNotional(price, rem_qty);
     const initial_margin = calculateInitialMargin(notional, leverage);
     this.accounts.releaseMargin(request.user_id, initial_margin);
-    this.accounts.get(cancel_request.user_id)?.orders.delete(order_id);
+    account.orders.delete(order_id);
+
+    this.emitDbEvent({
+      event_type: "CANCEL_ORDER",
+      changes: {
+        balances: [
+          {
+            user_id: request.user_id,
+            available: account.collateral.available,
+            reserved: account.collateral.reserved,
+          },
+        ],
+        orders: [],
+        order_updates: [
+          {
+            order_id,
+            user_id: request.user_id,
+            market_id: request.market_id,
+            status: OrderStatus.CANCELLED,
+            remaining_order_margin: 0n,
+          },
+        ],
+        fills: [],
+        positions: [],
+        market_data: [],
+      },
+    });
 
     return engine_response("Order cancelled successfully", 1, {
       order_id,
