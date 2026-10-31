@@ -1,6 +1,6 @@
 import { createClient, type RedisClientType } from "redis";
 import { EngineEventSchema } from "commons/src/engine-event";
-import type { WebSocketEvent } from "./z";
+import type { WSEvent } from "./z";
 
 const STREAM = "engine-events";
 const GROUP = "websocket";
@@ -26,7 +26,7 @@ class RedisHandler {
   }
 
   public async readEvents(
-    onEvent: (event: WebSocketEvent) => Promise<void>
+    onEvent: (event: WSEvent) => Promise<void>
   ): Promise<void> {
     await this.connect();
     await this.createGroup();
@@ -53,7 +53,9 @@ class RedisHandler {
 
           const parsed = EngineEventSchema.safeParse(payload);
           if (!parsed.success) {
-            throw new Error(`Invalid ${STREAM} entry ${message.id}: ${parsed.error.message}`);
+            throw new Error(
+              `Invalid ${STREAM} entry ${message.id}: ${parsed.error.message}`
+            );
           }
 
           if (parsed.data.destination === "ws") {

@@ -1,7 +1,11 @@
 import { createClient, type RedisClientType } from "redis";
-import { EngineEventSchema, type EngineEventInput } from "commons/src/engine-event";
+import {
+  EngineEventSchema,
+  type EngineEventInput,
+} from "commons/src/engine-event";
 import type { EngineResponse } from "commons/src/index";
 import { RequestToEngineSchema, type EngineCommand } from "./zod/z";
+import type { EngineCommandResult } from "./engine";
 
 const EVENT_STREAM = "engine-events";
 const EVENT_GROUPS = ["db-projector", "websocket"] as const;
@@ -77,7 +81,11 @@ class RedisHandler {
   }
 
   public async readEngineRequestStream(
-    onRequest: (request: EngineCommand, replayTimestamp?: number) => EngineResponse,
+    onRequest: (
+      request: EngineCommand,
+      replayTimestamp: number | undefined,
+      sourceMessageId: string
+    ) => EngineCommandResult,
     initialStreamId: string,
     onApplied: (streamId: string) => void
   ) {
@@ -134,7 +142,28 @@ class RedisHandler {
       if (replay && !Number.isSafeInteger(replayTimestamp)) {
         throw new Error(`Invalid engine stream timestamp at ${message.id}`);
       }
-      const engine_response = onRequest(parseResult.data, replayTimestamp);
+      const { response: engine_response, dbEvents, wsEvents } = onRequest(
+        parseResult.data,
+        replayTimestamp,
+        message.id
+      );
+      const occurred_at_ms = replayTimestamp ?? Date.now();
+      for (const dbEvent of dbEvents) {
+        await this.publishEngineEvent({
+          source_message_id: message.id,
+          occurred_at_ms,
+          destination: "db",
+          ...dbEvent,
+        });
+      }
+      for (const wsEvent of wsEvents) {
+        await this.publishEngineEvent({
+          source_message_id: message.id,
+          occurred_at_ms,
+          destination: "ws",
+          ...wsEvent,
+        });
+      }
       onApplied(message.id);
       lastAppliedStreamId = message.id;
 
@@ -145,10 +174,14 @@ class RedisHandler {
 
     // A stateful engine must replay the retained stream itself, including entries
     // that an older consumer group acknowledged or left pending.
-    const latest = await this.client.xRevRange("engine", "+", "-", { COUNT: 1 });
+    const latest = await this.client.xRevRange("engine", "+", "-", {
+      COUNT: 1,
+    });
     const replayEndId = latest?.[0]?.id ?? "0-0";
     if (compareStreamIds(lastAppliedStreamId, replayEndId) > 0) {
-      throw new Error("Engine stream ends before the snapshot cursor; recovery is unsafe");
+      throw new Error(
+        "Engine stream ends before the snapshot cursor; recovery is unsafe"
+      );
     }
 
     while (compareStreamIds(lastAppliedStreamId, replayEndId) < 0) {
@@ -159,7 +192,9 @@ class RedisHandler {
         { COUNT: 100 }
       );
       if (!messages?.length) {
-        throw new Error("Engine stream entries required for recovery are unavailable");
+        throw new Error(
+          "Engine stream entries required for recovery are unavailable"
+        );
       }
       for (const message of messages) {
         await applyMessage(message, true);

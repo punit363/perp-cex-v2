@@ -1,4 +1,1 @@
-export {
-  WebSocketEventSchema,
-  type WebSocketEvent,
-} from "commons/src/engine-event";
+export { WSEventSchema, type WSEvent } from "commons/src/engine-event";

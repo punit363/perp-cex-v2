@@ -1,11 +1,16 @@
-import { divideRounded, formatFixed, multiplyFixed, SCALE } from "./math/fixed-point";
+import {
+  divideRounded,
+  formatFixed,
+  multiplyFixed,
+  SCALE,
+} from "./math/fixed-point";
 import type {
   EngineSnapshot,
   Fill,
   markPriceMetadata,
   SnapshotMarket,
 } from "./types";
-import { engine_response } from "./utils";
+import { engine_response, generate_liquidation_order_id } from "./utils";
 import type { EngineCommand } from "./zod/z";
 import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
@@ -16,6 +21,7 @@ import {
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
+import type { DBEventInput, WSEvent } from "commons/src/engine-event";
 import {
   OrderSide,
   OrderStatus,
@@ -26,13 +32,27 @@ import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
-const SNAPSHOT_PATH = fileURLToPath(new URL("../snapshot.json", import.meta.url));
+const SNAPSHOT_PATH = fileURLToPath(
+  new URL("../snapshot.json", import.meta.url)
+);
 
 type CommandOf<Action extends EngineCommand["action"]> = Extract<
   EngineCommand,
   { action: Action }
 >;
+
+type WSEventDraft<Event extends WSEvent = WSEvent> = Event extends WSEvent
+  ? Pick<Event, "event_type" | "data">
+  : never;
+type DBEventDraft = Pick<DBEventInput, "event_type" | "changes">;
+
+export type EngineCommandResult = {
+  response: EngineResponse;
+  dbEvents: DBEventDraft[];
+  wsEvents: WSEventDraft[];
+};
 
 class Engine {
   private orderbooks: Map<string, Orderbook> = new Map();
@@ -45,6 +65,13 @@ class Engine {
   private MAINTENANCE_MARGIN_RATE: bigint;
   private lastAppliedStreamId = "0-0";
   private replayTimestamp: number | null = null;
+  private currentSourceMessageId: string | null = null;
+  private liquidationOrderSequence = 0;
+  private awaitingEventPublication = false;
+  private commandEvents: {
+    db: DBEventDraft[];
+    ws: WSEventDraft[];
+  } | null = null;
 
   private constructor(marketIds: string[]) {
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
@@ -91,7 +118,9 @@ class Engine {
 
       snapshot.accounts.forEach((account) => {
         account.positions.forEach((position) => {
-          let positionUsers = this.positionUsersByMarket.get(position.market_id);
+          let positionUsers = this.positionUsersByMarket.get(
+            position.market_id
+          );
           if (!positionUsers) {
             positionUsers = new Set<string>();
             this.positionUsersByMarket.set(position.market_id, positionUsers);
@@ -124,7 +153,9 @@ class Engine {
 
   static async create(): Promise<Engine> {
     const { MarketRepo } = await import("db/repositories/market.repo");
-    const marketIds = (await MarketRepo.listMarkets()).map((market) => market.market_id);
+    const marketIds = (await MarketRepo.listMarkets()).map(
+      (market) => market.market_id
+    );
     return new Engine(marketIds);
   }
 
@@ -134,10 +165,13 @@ class Engine {
 
   recordAppliedStreamId(streamId: string): void {
     this.lastAppliedStreamId = streamId;
+    this.awaitingEventPublication = false;
   }
 
   captureSnapshot() {
     setInterval(() => {
+      if (this.awaitingEventPublication) return;
+
       const snapshot: EngineSnapshot = {
         version: 2,
         snapshot_time: Date.now(),
@@ -145,19 +179,22 @@ class Engine {
         last_applied_stream_id: this.lastAppliedStreamId,
         markets: [],
         accounts: this.accounts.snapshotAccount(),
-        mark_prices: Array.from(this.markPriceMetadata, ([market_id, metadata]) => {
-          const price = this.markPrices.get(market_id);
-          if (price === undefined) {
-            throw new Error(`Missing mark price for market ${market_id}`);
+        mark_prices: Array.from(
+          this.markPriceMetadata,
+          ([market_id, metadata]) => {
+            const price = this.markPrices.get(market_id);
+            if (price === undefined) {
+              throw new Error(`Missing mark price for market ${market_id}`);
+            }
+            return {
+              market_id,
+              price: String(price),
+              producer_id: metadata.producer_id,
+              source_timestamp: metadata.source_timestamp,
+              sequence: String(metadata.sequence),
+            };
           }
-          return {
-            market_id,
-            price: String(price),
-            producer_id: metadata.producer_id,
-            source_timestamp: metadata.source_timestamp,
-            sequence: String(metadata.sequence),
-          };
-        }),
+        ),
       };
 
       this.orderbooks.forEach((orderbook, market_id) => {
@@ -214,6 +251,63 @@ class Engine {
       this.replayTimestamp = null;
     }
   };
+
+  processEngineCommand = (
+    request: EngineCommand,
+    replayTimestamp?: number,
+    sourceMessageId?: string
+  ): EngineCommandResult => {
+    const events = { db: [] as DBEventDraft[], ws: [] as WSEventDraft[] };
+    this.commandEvents = events;
+    this.currentSourceMessageId = sourceMessageId ?? randomUUID();
+    this.liquidationOrderSequence = 0;
+    try {
+      const response = this.processEngineOrder(request, replayTimestamp);
+      // Project all changes from one command together: orders must exist before fills.
+      const dbEvents: DBEventDraft[] =
+        events.db.length > 1
+          ? [
+              {
+                event_type: events.db[events.db.length - 1]!.event_type,
+                changes: {
+                  balances: events.db.flatMap(
+                    (event) => event.changes.balances ?? []
+                  ),
+                  orders: events.db.flatMap(
+                    (event) => event.changes.orders ?? []
+                  ),
+                  order_updates: events.db.flatMap(
+                    (event) => event.changes.order_updates ?? []
+                  ),
+                  fills: events.db.flatMap(
+                    (event) => event.changes.fills ?? []
+                  ),
+                  positions: events.db.flatMap(
+                    (event) => event.changes.positions ?? []
+                  ),
+                  market_data: events.db.flatMap(
+                    (event) => event.changes.market_data ?? []
+                  ),
+                },
+              },
+            ]
+          : events.db;
+      this.awaitingEventPublication =
+        dbEvents.length > 0 || events.ws.length > 0;
+      return { response, dbEvents, wsEvents: events.ws };
+    } finally {
+      this.commandEvents = null;
+      this.currentSourceMessageId = null;
+    }
+  };
+
+  private emitDbEvent(event: DBEventDraft): void {
+    this.commandEvents?.db.push(event);
+  }
+
+  private emitWsEvent(event: WSEventDraft): void {
+    this.commandEvents?.ws.push(event);
+  }
 
   private onramp(request: CommandOf<"ONRAMP">): EngineResponse {
     if (request.amount <= 0n) {

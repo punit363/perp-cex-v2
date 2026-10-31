@@ -6,7 +6,7 @@ const ScaledIntegerSchema = z
   .union([z.bigint(), z.string().regex(/^-?(?:0|[1-9]\d*)$/)])
   .transform((value) => value.toString());
 
-// WebSocket events expose human-readable decimal values.
+// WS events expose human-readable decimal values.
 const DecimalSchema = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d{1,8})?$/);
 const IdSchema = z.string().min(1);
 
@@ -30,7 +30,14 @@ const OrderChangeSchema = z.object({
   initial_margin: ScaledIntegerSchema,
   remaining_order_margin: ScaledIntegerSchema,
   slippage: ScaledIntegerSchema,
-  arrival_seq: ScaledIntegerSchema,
+});
+
+const OrderUpdateSchema = z.object({
+  order_id: IdSchema,
+  user_id: IdSchema,
+  market_id: IdSchema,
+  status: z.literal(OrderStatus.CANCELLED),
+  remaining_order_margin: ScaledIntegerSchema,
 });
 
 const FillChangeSchema = z.object({
@@ -40,7 +47,10 @@ const FillChangeSchema = z.object({
   maker_user_id: IdSchema,
   taker_user_id: IdSchema,
   price: ScaledIntegerSchema,
-  quantity: ScaledIntegerSchema,
+  filled: ScaledIntegerSchema,
+  maker_leverage: ScaledIntegerSchema,
+  maker_order_margin_consumed: ScaledIntegerSchema,
+  maker_order_status: z.enum(OrderStatus),
 });
 
 const PositionSchema = z.object({
@@ -71,7 +81,6 @@ const MarketDataChangeSchema = z.object({
 });
 
 const EventMetadataSchema = z.object({
-  schema_version: z.literal(1),
   source_message_id: IdSchema,
   occurred_at_ms: z.number().int().nonnegative(),
 });
@@ -82,23 +91,25 @@ export const DBEventSchema = EventMetadataSchema.extend({
     "BALANCE_CHANGE",
     "PLACE_ORDER",
     "CANCEL_ORDER",
+    "LIQUIDATION",
     "MARK_PRICE_UPDATE",
     "FUNDING_SETTLEMENT",
   ]),
   changes: z.object({
     balances: z.array(BalanceChangeSchema).default([]),
     orders: z.array(OrderChangeSchema).default([]),
+    order_updates: z.array(OrderUpdateSchema).default([]),
     fills: z.array(FillChangeSchema).default([]),
     positions: z.array(PositionChangeSchema).default([]),
     market_data: z.array(MarketDataChangeSchema).default([]),
   }),
 });
 
-const WebSocketMetadataSchema = EventMetadataSchema.extend({
+const WSMetadataSchema = EventMetadataSchema.extend({
   destination: z.literal("ws"),
 });
 
-const BookEventSchema = WebSocketMetadataSchema.extend({
+const BookEventSchema = WSMetadataSchema.extend({
   event_type: z.literal("BOOK"),
   data: z.object({
     market_id: IdSchema,
@@ -107,7 +118,7 @@ const BookEventSchema = WebSocketMetadataSchema.extend({
   }),
 });
 
-const TradeEventSchema = WebSocketMetadataSchema.extend({
+const TradeEventSchema = WSMetadataSchema.extend({
   event_type: z.literal("TRADE"),
   data: z.object({
     trade_id: IdSchema,
@@ -118,7 +129,7 @@ const TradeEventSchema = WebSocketMetadataSchema.extend({
   }),
 });
 
-const TickerEventSchema = WebSocketMetadataSchema.extend({
+const TickerEventSchema = WSMetadataSchema.extend({
   event_type: z.literal("TICKER"),
   data: z.object({
     market_id: IdSchema,
@@ -130,15 +141,16 @@ const TickerEventSchema = WebSocketMetadataSchema.extend({
   }),
 });
 
-export const WebSocketEventSchema = z.discriminatedUnion("event_type", [
+export const WSEventSchema = z.discriminatedUnion("event_type", [
   BookEventSchema,
   TradeEventSchema,
   TickerEventSchema,
 ]);
 
-export const EngineEventSchema = z.union([DBEventSchema, WebSocketEventSchema]);
+export const EngineEventSchema = z.union([DBEventSchema, WSEventSchema]);
 
 export type DBEvent = z.output<typeof DBEventSchema>;
-export type WebSocketEvent = z.output<typeof WebSocketEventSchema>;
+export type DBEventInput = z.input<typeof DBEventSchema>;
+export type WSEvent = z.output<typeof WSEventSchema>;
 export type EngineEvent = z.output<typeof EngineEventSchema>;
 export type EngineEventInput = z.input<typeof EngineEventSchema>;

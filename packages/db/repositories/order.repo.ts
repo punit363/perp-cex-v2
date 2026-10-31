@@ -33,55 +33,59 @@ const OrderRepo = {
     });
   },
 
-  upsertOrder: async (order: OrderDBUpdate) => {
-    const {
-      user_id,
-      order_id,
-      market_id,
-      type,
-      side,
-      price,
-      slippage,
-      quantity,
-      filled,
-      initial_margin,
-      leverage,
-      remaining_order_margin,
-      status,
-      arrival_seq,
-    } = order;
-
-    const response = await prisma.order.upsert({
-      where: {
-        order_id,
-      },
-      update: {
-        user_id,
-        order_id,
-        market_id,
-        type,
-        side,
-        price,
-        slippage,
-        quantity,
-        filled,
-        initial_margin,
-        leverage,
-        remaining_order_margin,
-        status,
-        arrival_seq,
-      },
-      create: order,
+  insertOrder: async (order: OrderDBUpdate) => {
+    await prisma.order.createMany({
+      data: [order],
+      skipDuplicates: true,
     });
-
-    return response;
   },
 
-  insertFill: async (fill: FillDBUpdate) => {
-    await prisma.fill.upsert({
-      where: { trade_id: fill.trade_id },
-      update: fill,
-      create: fill,
+  updateOrderStatus: async (update: {
+    order_id: string;
+    user_id: string;
+    market_id: string;
+    status: OrderStatus;
+    remaining_order_margin: bigint;
+  }) => {
+    await prisma.order.update({
+      where: {
+        order_id: update.order_id,
+        user_id: update.user_id,
+        market_id: update.market_id,
+      },
+      data: {
+        status: update.status,
+        remaining_order_margin: update.remaining_order_margin,
+      },
+    });
+  },
+
+  applyFill: async (fill: FillDBUpdate) => {
+    await prisma.$transaction(async (tx) => {
+      const inserted = await tx.fill.createMany({
+        data: [{
+          trade_id: fill.trade_id,
+          maker_order_id: fill.maker_order_id,
+          taker_order_id: fill.taker_order_id,
+          maker_user_id: fill.maker_user_id,
+          taker_user_id: fill.taker_user_id,
+          price: fill.price,
+          quantity: fill.filled,
+        }],
+        skipDuplicates: true,
+      });
+
+      if (inserted.count === 0) return;
+      await tx.order.update({
+        where: { order_id: fill.maker_order_id },
+        data: {
+          filled: { increment: fill.filled },
+          remaining_order_margin: {
+            decrement: fill.maker_order_margin_consumed,
+          },
+          status: fill.maker_order_status,
+        },
+      });
     });
   },
 

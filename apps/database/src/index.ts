@@ -9,7 +9,7 @@ redis
   .readEvents(async (event) => {
     // Fills reference orders, so persist order changes first.
     for (const order of event.changes.orders) {
-      await OrderRepo.upsertOrder({
+      await OrderRepo.insertOrder({
         order_id: order.order_id,
         user_id: order.user_id,
         market_id: order.market_id,
@@ -23,19 +23,31 @@ redis
         leverage: BigInt(order.leverage),
         remaining_order_margin: BigInt(order.remaining_order_margin),
         status: order.status,
-        arrival_seq: BigInt(order.arrival_seq),
       });
     }
 
     for (const fill of event.changes.fills) {
-      await OrderRepo.insertFill({
+      await OrderRepo.applyFill({
         trade_id: fill.trade_id,
         maker_order_id: fill.maker_order_id,
         taker_order_id: fill.taker_order_id,
         maker_user_id: fill.maker_user_id,
         taker_user_id: fill.taker_user_id,
         price: BigInt(fill.price),
-        quantity: BigInt(fill.quantity),
+        filled: BigInt(fill.filled),
+        maker_leverage: BigInt(fill.maker_leverage),
+        maker_order_margin_consumed: BigInt(fill.maker_order_margin_consumed),
+        maker_order_status: fill.maker_order_status,
+      });
+    }
+
+    for (const update of event.changes.order_updates) {
+      await OrderRepo.updateOrderStatus({
+        order_id: update.order_id,
+        user_id: update.user_id,
+        market_id: update.market_id,
+        status: update.status,
+        remaining_order_margin: BigInt(update.remaining_order_margin),
       });
     }
 

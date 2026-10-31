@@ -34,7 +34,6 @@ interface OrderDBUpdate {
   leverage: bigint;
   remaining_order_margin: bigint;
   status: OrderStatus;
-  arrival_seq: bigint;
 }
 interface FillDBUpdate {
   trade_id: string;
@@ -43,7 +42,10 @@ interface FillDBUpdate {
   maker_user_id: string;
   taker_user_id: string;
   price: bigint;
-  quantity: bigint;
+  filled: bigint;
+  maker_leverage: bigint;
+  maker_order_margin_consumed: bigint;
+  maker_order_status: OrderStatus;
 }
 interface PositionDBUpdate {
   user_id: string;
