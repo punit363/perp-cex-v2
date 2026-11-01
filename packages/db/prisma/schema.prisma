@@ -42,6 +42,13 @@ enum PositionType {
   SHORT
 }
 
+enum InsuranceFundEntryType {
+  LIQUIDATION_FEE
+  LIQUIDATION_SURPLUS
+  SHORTFALL_COVER
+  UNCOVERED_SHORTFALL
+}
+
 model Order {
   order_id                        String      @id
   user_id                         String
@@ -131,4 +138,30 @@ model Collateral {
   user_id         String      @id
   available       BigInt
   reserved        BigInt
+}
+
+model InsuranceFund {
+  collateral_asset          String   @id
+  balance                   BigInt
+  total_liquidation_fees    BigInt
+  total_liquidation_surplus BigInt
+  total_shortfall_covered   BigInt
+  total_uncovered_shortfall BigInt
+  updated_at                DateTime @updatedAt
+}
+
+model InsuranceFundLedgerEntry {
+  entry_id             String                 @id
+  collateral_asset     String
+  market_id            String
+  user_id              String
+  liquidation_order_id String
+  type                  InsuranceFundEntryType
+  amount                BigInt
+  balance_after         BigInt
+  uncovered_shortfall   BigInt
+  created_at            DateTime               @default(now())
+
+  @@index([collateral_asset, created_at])
+  @@index([liquidation_order_id])
 }

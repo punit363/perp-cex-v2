@@ -16,6 +16,7 @@ import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
 import AccountStore from "./accounts";
 import {
+  calculateFee,
   calculateInitialMargin,
   calculateMaintenanceMargin,
   calculateNotional,
@@ -30,6 +31,7 @@ import {
 } from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
+import InsuranceFund from "./insurance-fund";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -74,6 +76,8 @@ class Engine {
   private readonly MAX_MARK_PRICE_AGE_MS;
   private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS;
   private MAINTENANCE_MARGIN_RATE: bigint;
+  private readonly LIQUIDATION_FEE_RATE: bigint;
+  private insuranceFund!: InsuranceFund;
   private lastAppliedStreamId = "0-0";
   private replayTimestamp: number | null = null;
   private currentSourceMessageId: string | null = null;
@@ -94,6 +98,7 @@ class Engine {
     this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
       MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
+    this.LIQUIDATION_FEE_RATE = MARKET_CONFIG.LIQUIDATION_FEE_RATE;
 
     if (existsSync(SNAPSHOT_PATH)) {
       const parsedSnapshot = EngineSnapshotSchema.safeParse(
@@ -106,6 +111,11 @@ class Engine {
         throw new Error(`Cannot restore invalid engine snapshot: ${details}`);
       }
       const snapshot: EngineSnapshot = parsedSnapshot.data;
+      this.insuranceFund = new InsuranceFund(
+        MARKET_CONFIG.COLLATERAL_ASSET,
+        MARKET_CONFIG.INSURANCE_FUND_INITIAL_BALANCE,
+        snapshot.insurance_fund
+      );
       this.lastAppliedStreamId = snapshot.last_applied_stream_id;
       snapshot.mark_prices.forEach((mark) => {
         this.markPrices.set(mark.market_id, BigInt(mark.price));
@@ -144,6 +154,13 @@ class Engine {
           positionUsers.add(account.user_id);
         });
       });
+    }
+
+    if (!this.insuranceFund) {
+      this.insuranceFund = new InsuranceFund(
+        MARKET_CONFIG.COLLATERAL_ASSET,
+        MARKET_CONFIG.INSURANCE_FUND_INITIAL_BALANCE
+      );
     }
 
     for (const market_id of marketIds) {
@@ -189,7 +206,7 @@ class Engine {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
-        version: 2,
+        version: 3,
         snapshot_time: Date.now(),
         scale: Number(SCALE),
         last_applied_stream_id: this.lastAppliedStreamId,
@@ -211,6 +228,7 @@ class Engine {
             };
           }
         ),
+        insurance_fund: this.insuranceFund.snapshot(),
       };
 
       this.orderbooks.forEach((orderbook, market_id) => {
@@ -354,6 +372,9 @@ class Engine {
                   ),
                   candles: events.db.flatMap(
                     (event) => event.changes.candles ?? []
+                  ),
+                  insurance_fund: events.db.flatMap(
+                    (event) => event.changes.insurance_fund ?? []
                   ),
                 },
               },
@@ -1204,24 +1225,48 @@ class Engine {
       }
 
       const liquidation_risks = new Set<string>();
-      let net_margin_recovered = 0n;
+      let remaining_liquidation_quantity = position.quantity;
+      let remaining_position_margin = position.reserved_margin;
+      let consumed_position_margin = 0n;
+      const fund_settlement_inputs: Array<{
+        entry_id_prefix: string;
+        market_id: string;
+        user_id: string;
+        liquidation_order_id: string;
+        execution_equity: bigint;
+        requested_liquidation_fee: bigint;
+      }> = [];
+      const insurance_fund_changes: DBEventDraft["changes"]["insurance_fund"] = [];
       response?.fills.forEach((fill: Fill) => {
-        //handle taker position
-        let margin_recovered = 0n;
-        if (side == OrderSide.BUY) {
-          margin_recovered = multiplyFixed(
-            fill.price - position.avg_entry_price,
-            fill.filled,
-            "ceil"
-          );
-        } else {
-          margin_recovered = multiplyFixed(
-            position.avg_entry_price - fill.price,
-            fill.filled,
-            "ceil"
-          );
-        }
-        net_margin_recovered += margin_recovered;
+        const allocated_margin =
+          fill.filled === remaining_liquidation_quantity
+            ? remaining_position_margin
+            : divideRounded(
+                remaining_position_margin * fill.filled,
+                remaining_liquidation_quantity,
+                "floor"
+              );
+        const realized_pnl = calcUnrealisedPnL(
+          position.type,
+          fill.price,
+          position.avg_entry_price,
+          fill.filled
+        );
+        const requested_liquidation_fee = calculateFee(
+          calculateNotional(fill.price, fill.filled),
+          this.LIQUIDATION_FEE_RATE
+        );
+        fund_settlement_inputs.push({
+          entry_id_prefix: `${order_id}:${fill.trade_id}`,
+          market_id,
+          user_id,
+          liquidation_order_id: order_id,
+          execution_equity: allocated_margin + realized_pnl,
+          requested_liquidation_fee,
+        });
+        consumed_position_margin += allocated_margin;
+        remaining_position_margin -= allocated_margin;
+        remaining_liquidation_quantity -= fill.filled;
 
         //handle maker position
         //========Update Maker Position===========
@@ -1354,16 +1399,29 @@ class Engine {
         );
       });
 
-      for (const affected_user_id of liquidation_risks) {
-        this.liquidationCheck({ user_id: affected_user_id, market_id });
+      for (const settlement_input of fund_settlement_inputs) {
+        const fund_settlement = this.insuranceFund.settleLiquidation(
+          settlement_input
+        );
+        insurance_fund_changes.push({
+          collateral_asset: fund_settlement.collateral_asset,
+          balance: fund_settlement.balance,
+          total_liquidation_fees: fund_settlement.total_liquidation_fees,
+          total_liquidation_surplus: fund_settlement.total_liquidation_surplus,
+          total_shortfall_covered: fund_settlement.total_shortfall_covered,
+          total_uncovered_shortfall: fund_settlement.total_uncovered_shortfall,
+          entries: fund_settlement.entries,
+        });
       }
 
-      //release the prev margin + realise the PnL
-      this.accounts.debitMargin(user_id, net_margin_recovered);
-      position.reserved_margin -= net_margin_recovered;
+      // Liquidation consumes the portion of isolated margin assigned to fills.
+      // Better-than-bankruptcy execution belongs to the insurance fund; worse
+      // execution is covered by it, so neither result reaches user collateral.
+      this.accounts.debitMargin(user_id, consumed_position_margin);
+      position.reserved_margin = remaining_position_margin;
+      position.quantity = remaining_liquidation_quantity;
 
       if (response.rem_qty != 0n) {
-        position.quantity -= response.filled;
         position.unrealized_pnl = calcUnrealisedPnL(
           position.type,
           mark_price,
@@ -1372,7 +1430,6 @@ class Engine {
         );
       } else {
         //delete the redundant position
-        this.accounts.releaseMargin(user_id, position.reserved_margin);
         this.accounts.get(user_id)?.positions.delete(market_id);
         this.positionUsersByMarket.get(market_id)?.delete(user_id);
       }
@@ -1397,7 +1454,10 @@ class Engine {
                 market_id,
                 type: OrderType.MARKET,
                 side,
-                status: OrderStatus.FILLED,
+                status:
+                  response.rem_qty === 0n
+                    ? OrderStatus.FILLED
+                    : OrderStatus.PARTIALLY_FILLED,
                 price: mark_price,
                 quantity: liquidation_quantity,
                 filled: response.filled,
@@ -1457,8 +1517,13 @@ class Engine {
               ...(response.fills.length > 0 ? orderbook.fetchMarketData() : {}),
             },
           ],
+          insurance_fund: insurance_fund_changes,
         },
       });
+
+      for (const affected_user_id of liquidation_risks) {
+        this.liquidationCheck({ user_id: affected_user_id, market_id });
+      }
     }
   }
 

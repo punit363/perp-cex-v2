@@ -31,8 +31,17 @@ const SnapshotOrderSchema = z.object({
   { message: "Snapshot order has invalid quantity, price, filled, or leverage" }
 );
 
+const SnapshotInsuranceFundSchema = z.object({
+  collateral_asset: z.string().min(1),
+  balance: SnapshotInteger.refine((value) => BigInt(value) >= 0n),
+  total_liquidation_fees: SnapshotInteger.refine((value) => BigInt(value) >= 0n),
+  total_liquidation_surplus: SnapshotInteger.refine((value) => BigInt(value) >= 0n),
+  total_shortfall_covered: SnapshotInteger.refine((value) => BigInt(value) >= 0n),
+  total_uncovered_shortfall: SnapshotInteger.refine((value) => BigInt(value) >= 0n),
+});
+
 const EngineSnapshotSchema = z.object({
-  version: z.literal(2),
+  version: z.union([z.literal(2), z.literal(3)]),
   snapshot_time: z.number().int().nonnegative(),
   scale: z.literal(Number(SCALE)),
   last_applied_stream_id: z.string().regex(/^\d+-\d+$/),
@@ -65,7 +74,15 @@ const EngineSnapshotSchema = z.object({
     source_timestamp: z.number().int().nonnegative(),
     sequence: z.string().regex(/^\d+$/),
   })),
+  insurance_fund: SnapshotInsuranceFundSchema.optional(),
 }).superRefine((snapshot, context) => {
+  if (snapshot.version === 3 && !snapshot.insurance_fund) {
+    context.addIssue({
+      code: "custom",
+      path: ["insurance_fund"],
+      message: "Version 3 snapshot requires insurance fund state",
+    });
+  }
   const accountIds = new Set<string>();
   snapshot.accounts.forEach((account, index) => {
     if (accountIds.has(account.user_id)) {

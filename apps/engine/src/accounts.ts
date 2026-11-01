@@ -89,6 +89,9 @@ class AccountStore {
 
   debitMargin(user_id: string, amount: bigint): void {
     const account = this.getOrCreate(user_id);
+    if (amount < 0n || account.collateral.reserved < amount) {
+      throw new Error("Cannot consume more reserved margin than the account holds");
+    }
     account.collateral.reserved -= amount;
   }
 

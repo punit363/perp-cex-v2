@@ -4,6 +4,7 @@ import OrderRepo from "db/repositories/order.repo";
 import { MarketRepo } from "db/repositories/market.repo";
 import { formatScaledInteger } from "commons/src/fixed";
 import type { CandleDBUpdate } from "db/repositories/order.repo";
+import InsuranceFundRepo from "db/repositories/insurance-fund.repo";
 
 const redis = new RedisHandler();
 
@@ -87,6 +88,10 @@ redis
         BigInt(balance.available),
         BigInt(balance.reserved)
       );
+    }
+
+    for (const fundChange of event.changes.insurance_fund) {
+      await InsuranceFundRepo.projectChange(fundChange);
     }
 
     for (const change of event.changes.market_data) {

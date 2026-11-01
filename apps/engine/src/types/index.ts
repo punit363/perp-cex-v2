@@ -108,14 +108,55 @@ interface SnapshotMarkPrice {
   sequence: string;
 }
 
+interface SnapshotInsuranceFund {
+  collateral_asset: string;
+  balance: string;
+  total_liquidation_fees: string;
+  total_liquidation_surplus: string;
+  total_shortfall_covered: string;
+  total_uncovered_shortfall: string;
+}
+
+type InsuranceFundLedgerEntryType =
+  | "LIQUIDATION_FEE"
+  | "LIQUIDATION_SURPLUS"
+  | "SHORTFALL_COVER"
+  | "UNCOVERED_SHORTFALL";
+
+interface InsuranceFundLedgerEntry {
+  entry_id: string;
+  market_id: string;
+  user_id: string;
+  liquidation_order_id: string;
+  type: InsuranceFundLedgerEntryType;
+  amount: bigint;
+  balance_after: bigint;
+  uncovered_shortfall: bigint;
+}
+
+interface InsuranceFundSettlement {
+  collateral_asset: string;
+  balance: bigint;
+  total_liquidation_fees: bigint;
+  total_liquidation_surplus: bigint;
+  total_shortfall_covered: bigint;
+  total_uncovered_shortfall: bigint;
+  liquidation_fee: bigint;
+  liquidation_surplus: bigint;
+  shortfall_covered: bigint;
+  uncovered_shortfall: bigint;
+  entries: InsuranceFundLedgerEntry[];
+}
+
 interface EngineSnapshot {
-  version: 2;
+  version: 2 | 3;
   snapshot_time: number;
   scale: number;
   last_applied_stream_id: string;
   markets: SnapshotMarket[];
   accounts: SnapshotAccount[];
   mark_prices: SnapshotMarkPrice[];
+  insurance_fund?: SnapshotInsuranceFund;
 }
 
 interface Fill {
@@ -159,6 +200,9 @@ export type {
   SnapshotPosition,
   SnapshotAccount,
   SnapshotMarkPrice,
+  SnapshotInsuranceFund,
+  InsuranceFundLedgerEntry,
+  InsuranceFundSettlement,
   EngineSnapshot,
   Fill,
   PlaceOrderResult,

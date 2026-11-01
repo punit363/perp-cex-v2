@@ -92,6 +92,32 @@ const CandleChangeSchema = z.object({
   trade_count: z.number().int().positive(),
 });
 
+const InsuranceFundLedgerEntrySchema = z.object({
+  entry_id: IdSchema,
+  market_id: IdSchema,
+  user_id: IdSchema,
+  liquidation_order_id: IdSchema,
+  type: z.enum([
+    "LIQUIDATION_FEE",
+    "LIQUIDATION_SURPLUS",
+    "SHORTFALL_COVER",
+    "UNCOVERED_SHORTFALL",
+  ]),
+  amount: ScaledIntegerSchema,
+  balance_after: ScaledIntegerSchema,
+  uncovered_shortfall: ScaledIntegerSchema,
+});
+
+const InsuranceFundChangeSchema = z.object({
+  collateral_asset: IdSchema,
+  balance: ScaledIntegerSchema,
+  total_liquidation_fees: ScaledIntegerSchema,
+  total_liquidation_surplus: ScaledIntegerSchema,
+  total_shortfall_covered: ScaledIntegerSchema,
+  total_uncovered_shortfall: ScaledIntegerSchema,
+  entries: z.array(InsuranceFundLedgerEntrySchema),
+});
+
 const EventMetadataSchema = z.object({
   source_message_id: IdSchema,
   occurred_at_ms: z.number().int().nonnegative(),
@@ -115,6 +141,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     positions: z.array(PositionChangeSchema).default([]),
     market_data: z.array(MarketDataChangeSchema).default([]),
     candles: z.array(CandleChangeSchema).default([]),
+    insurance_fund: z.array(InsuranceFundChangeSchema).default([]),
   }),
 });
 

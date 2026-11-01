@@ -1,10 +1,17 @@
 import { parseFixed } from "../math/fixed-point";
 
 const MARKET_CONFIG = {
-  COLLATERAL_ASSET: process.env.COLLATERAL_ASSET,
+  COLLATERAL_ASSET: process.env.COLLATERAL_ASSET || "USDT",
   LEVERAGE_LIMIT: process.env.LEVERAGE_LIMIT,
-  MAKER_FEE: process.env.MAKER_FEE,
-  TAKER_FEE: process.env.TAKER_FEE,
+  // OKX regular-user perpetual defaults. Keep configurable per deployment.
+  MAKER_FEE_RATE: parseFixed(process.env.MAKER_FEE_RATE || "0.0002"),
+  TAKER_FEE_RATE: parseFixed(process.env.TAKER_FEE_RATE || "0.0005"),
+  LIQUIDATION_FEE_RATE: parseFixed(
+    process.env.LIQUIDATION_FEE_RATE || process.env.TAKER_FEE_RATE || "0.0005"
+  ),
+  INSURANCE_FUND_INITIAL_BALANCE: parseFixed(
+    process.env.INSURANCE_FUND_INITIAL_BALANCE || "0"
+  ),
   SATOSHI_SCALE: process.env.SATOSHI_SCALE,
   MAINTENANCE_MARGIN_RATE: parseFixed(
     process.env.MAINTENANCE_MARGIN_RATE || "0.005"
