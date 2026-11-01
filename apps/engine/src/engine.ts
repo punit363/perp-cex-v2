@@ -68,6 +68,7 @@ class Engine {
   private currentSourceMessageId: string | null = null;
   private liquidationOrderSequence = 0;
   private awaitingEventPublication = false;
+  private snapshotTimer?: ReturnType<typeof setInterval>;
   private commandEvents: {
     db: DBEventDraft[];
     ws: WSEventDraft[];
@@ -171,7 +172,7 @@ class Engine {
   }
 
   captureSnapshot() {
-    setInterval(() => {
+    this.snapshotTimer = setInterval(() => {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
@@ -217,6 +218,11 @@ class Engine {
       writeFileSync(temporaryPath, JSON.stringify(snapshot));
       renameSync(temporaryPath, SNAPSHOT_PATH);
     }, 3000);
+  }
+
+  stopSnapshot() {
+    if (this.snapshotTimer) clearInterval(this.snapshotTimer);
+    this.snapshotTimer = undefined;
   }
 
   processEngineOrder(

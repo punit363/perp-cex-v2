@@ -6,9 +6,14 @@ const publisher = createClient();
 await Promise.all([client.connect(), publisher.connect()]);
 
 const loopbackResolve = new Map<string, (value: unknown) => void>();
+let responseReaderReady!: () => void;
+const readerReady = new Promise<void>((resolve) => {
+  responseReaderReady = resolve;
+});
 
 export const loopback = async (request: RequestToEngine) => {
   try {
+    await readerReady;
     const loopback_id = Math.random().toString();
 
     let fn_resolve!: (value: unknown) => void;
@@ -54,42 +59,42 @@ export const loopback = async (request: RequestToEngine) => {
 };
 
 const main = async () => {
-  try {
-    await publisher.xGroupCreate("backend", "backend-group", "0", {
-      MKSTREAM: true,
-    });
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes("BUSYGROUP")) {
-      throw error;
-    }
-  }
-
+  // Each backend process needs every response because pending callbacks are local
+  // to that process. A shared consumer group would send each response to only one.
+  let lastResponseId: string | undefined;
   while (true) {
-    const request = await publisher.xReadGroup(
-      "backend-group",
-      "backend-consumer-1",
-      [{ key: "backend", id: ">" }],
-      { BLOCK: 0, COUNT: 1 }
-    );
-
-    if (!request) {
-      console.log("No request yet");
-      continue;
-    }
-    for (const stream of request) {
-      for (const message of stream.messages) {
-        let { loopback_id, ...response} = JSON.parse(message.message.response);
-
-        JSON.stringify(response.loopback_id);
-
-        if (loopbackResolve.get(loopback_id)) {
-          loopbackResolve.get(loopback_id)?.(response);
-          loopbackResolve.delete(loopback_id);
-        }
-        await publisher.xAck("backend", "backend-group", message.id);
+    try {
+      if (lastResponseId === undefined) {
+        const latest = await publisher.xRevRange("backend", "+", "-", { COUNT: 1 });
+        lastResponseId = latest?.[0]?.id ?? "0-0";
+        responseReaderReady();
       }
+      const streams = await publisher.xRead(
+        [{ key: "backend", id: lastResponseId }],
+        { BLOCK: 0, COUNT: 100 }
+      );
+      if (!streams) continue;
+
+      for (const stream of streams) {
+        for (const message of stream.messages) {
+          lastResponseId = message.id;
+          try {
+            const { loopback_id, ...response } = JSON.parse(String(message.message.response));
+            const resolve = loopbackResolve.get(loopback_id);
+            if (resolve) {
+              resolve(response);
+              loopbackResolve.delete(loopback_id);
+            }
+          } catch (error) {
+            console.error(`Invalid backend response at ${message.id}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Backend response reader failed:", error);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 };
 
-main();
+void main().catch((error) => console.error("Backend response reader stopped:", error));

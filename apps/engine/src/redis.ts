@@ -33,6 +33,11 @@ class RedisHandler {
     this.client = createClient();
   }
 
+  close(): void {
+    this.client.destroy();
+    this.publisher.destroy();
+  }
+
   public async connect(): Promise<void> {
     if (!this.client.isOpen) {
       await this.client.connect();
