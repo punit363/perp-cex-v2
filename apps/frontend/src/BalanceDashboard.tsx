@@ -1,4 +1,5 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties, type FormEvent } from "react";
+import { apiBase } from "./MarketDashboard";
 
 type Balance = { available: string; reserved: string };
 
@@ -22,14 +23,19 @@ function WalletIcon({ type }: { type: "available" | "reserved" | "total" }) {
   return <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 23V9a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3Z" stroke="currentColor" strokeWidth="1.8" /><path d="M11 19.5 15 15l3 2.5 4-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
-export function BalanceDashboard({ balance, loading, error, username, onRefresh, onSignIn }: {
+export function BalanceDashboard({ balance, loading, error, username, token, onRefresh, onSignIn }: {
   balance: Balance | null;
   loading: boolean;
   error: string;
   username: string | null;
-  onRefresh: () => void;
+  token: string | null;
+  onRefresh: () => Promise<void>;
   onSignIn: () => void;
 }) {
+  const [amount, setAmount] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState("");
+  const [addSuccess, setAddSuccess] = useState("");
   const available = balance ? parseAmount(balance.available) : null;
   const reserved = balance ? parseAmount(balance.reserved) : null;
   const hasBalance = available !== null && reserved !== null;
@@ -39,6 +45,46 @@ export function BalanceDashboard({ balance, loading, error, username, onRefresh,
     : 0;
   const availablePercent = hasBalance && total && total > 0n ? 100 - reservedPercent : 0;
   const display = (amount: bigint | null) => amount === null ? "—" : `$${formatAmount(amount)}`;
+
+  async function addBalance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) return onSignIn();
+
+    const value = amount.trim();
+    const parsed = /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value) ? parseAmount(value) : null;
+    if (parsed === null || parsed <= 0n) {
+      setAddError("Enter a positive amount with up to 8 decimal places.");
+      setAddSuccess("");
+      return;
+    }
+
+    setAdding(true);
+    setAddError("");
+    setAddSuccess("");
+    try {
+      const response = await fetch(`${apiBase}/user/onramp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token },
+        body: JSON.stringify({ amount: value }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        status?: string;
+        message?: string;
+        data?: { engine_response?: { status?: number; message?: string } };
+      } | null;
+      if (!response.ok || payload?.status === "FAILURE" || payload?.data?.engine_response?.status !== 1) {
+        throw new Error(payload?.data?.engine_response?.message || payload?.message || `Request failed (${response.status})`);
+      }
+
+      setAmount("");
+      await onRefresh();
+      setAddSuccess(`Added $${formatAmount(parsed)} to your simulated balance.`);
+    } catch (cause) {
+      setAddError(cause instanceof Error ? cause.message : "Could not add balance. Try again.");
+    } finally {
+      setAdding(false);
+    }
+  }
 
   return (
     <main className="wallet-page">
@@ -51,7 +97,7 @@ export function BalanceDashboard({ balance, loading, error, username, onRefresh,
           </div>
           <div className="wallet-page__actions">
             <span className={`wallet-page__session ${username ? "is-connected" : ""}`}><i />{username ? `${username}'s account` : "Account not connected"}</span>
-            {username && <button type="button" className="wallet-page__refresh" onClick={onRefresh} disabled={loading} aria-label="Refresh balances" title="Refresh balances"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.2-5.5M20 4v5h-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>}
+            {username && <button type="button" className="wallet-page__refresh" onClick={() => void onRefresh()} disabled={loading} aria-label="Refresh balances" title="Refresh balances"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.2-5.5M20 4v5h-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>}
           </div>
         </div>
 
@@ -81,7 +127,25 @@ export function BalanceDashboard({ balance, loading, error, username, onRefresh,
           </section>
         </div>
 
-        {username && error && <div className="wallet-alert" role="alert"><span>{error}</span><button type="button" onClick={onRefresh}>Try again</button></div>}
+        <section className="wallet-add" aria-labelledby="wallet-add-title">
+          <div className="wallet-add__copy">
+            <span className="wallet-explainer__eyebrow">FUND YOUR ACCOUNT</span>
+            <h2 id="wallet-add-title">Add simulated balance</h2>
+            <p>Credit collateral for testing orders and positions. No real funds move.</p>
+          </div>
+          {token ? <form className="wallet-add__form" onSubmit={addBalance} noValidate>
+            <label htmlFor="wallet-add-amount">Amount</label>
+            <div className="wallet-add__controls">
+              <div className="wallet-add__input"><span aria-hidden="true">$</span><input id="wallet-add-amount" type="text" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={(event) => { setAmount(event.target.value); setAddError(""); setAddSuccess(""); }} disabled={adding} aria-describedby="wallet-add-hint" /></div>
+              <button type="submit" disabled={adding}>{adding ? "ADDING…" : "ADD BALANCE"}</button>
+            </div>
+            <span id="wallet-add-hint" className="wallet-add__hint">Positive amount · up to 8 decimal places</span>
+            {addError && <p className="wallet-add__error" role="alert">{addError}</p>}
+            {addSuccess && <p className="wallet-add__success" role="status">{addSuccess}</p>}
+          </form> : <button type="button" className="wallet-add__signin" onClick={onSignIn}>Sign in to add balance <span aria-hidden="true">↗</span></button>}
+        </section>
+
+        {username && error && <div className="wallet-alert" role="alert"><span>{error}</span><button type="button" onClick={() => void onRefresh()}>Try again</button></div>}
 
         <div className="wallet-metrics" aria-label="Collateral breakdown">
           <article className="wallet-metric">
