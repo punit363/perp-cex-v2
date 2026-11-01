@@ -1451,6 +1451,10 @@ class Engine {
       sequence: parsed_sequence,
     });
     this.commandEvents?.changedTickers.add(market_id);
+    this.emitDbEvent({
+      event_type: "MARK_PRICE_UPDATE",
+      changes: { market_data: [{ market_id, mark_price }] },
+    });
 
     const users_with_position = this.positionUsersByMarket.get(market_id);
 
