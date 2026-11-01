@@ -45,6 +45,27 @@ const OrderRepo = {
     });
   },
 
+  listOrdersByIds: async (order_ids: string[]) => {
+    if (order_ids.length === 0) return [];
+    return prisma.order.findMany({
+      where: { order_id: { in: order_ids } },
+      select: {
+        order_id: true,
+        user_id: true,
+        market_id: true,
+        side: true,
+        type: true,
+        status: true,
+        price: true,
+        quantity: true,
+        filled: true,
+        leverage: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+  },
+
   insertOrder: async (order: OrderDBUpdate) => {
     await prisma.order.createMany({
       data: [order],

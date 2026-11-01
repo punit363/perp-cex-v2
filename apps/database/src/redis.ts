@@ -1,8 +1,13 @@
 import { createClient, type RedisClientType } from "redis";
-import { EngineEventSchema } from "commons/src/engine-event";
+import {
+  EngineEventSchema,
+  PrivateAccountEventSchema,
+  type PrivateAccountEventInput,
+} from "commons/src/engine-event";
 import type { DBEvent } from "./z";
 
 const STREAM = "engine-events";
+const PRIVATE_STREAM = "private-events";
 const GROUP = "db-projector";
 const CONSUMER = "db-consumer-1";
 
@@ -40,6 +45,20 @@ class RedisHandler {
       data,
     });
     await this.publisher.xAdd(STREAM, "*", { event: JSON.stringify(payload) });
+  }
+
+  /**
+   * Private events are written only after the database projector completes the
+   * source engine event. This lets clients use REST for a reconnect snapshot
+   * and these events as authoritative, ordered deltas afterwards.
+   */
+  public async publishPrivateAccountEvent(
+    event: PrivateAccountEventInput
+  ): Promise<void> {
+    const payload = PrivateAccountEventSchema.parse(event);
+    await this.publisher.xAdd(PRIVATE_STREAM, "*", {
+      event: JSON.stringify(payload),
+    });
   }
 
   private async createGroup(): Promise<void> {

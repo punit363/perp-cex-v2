@@ -200,7 +200,7 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   </section>;
 }
 
-export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }: { marketId: string; token: string | null; onSignIn: () => void; onBalanceRefresh: () => void }) {
+export function MarketTradePage({ marketId, token, accountEventRevision, onSignIn, onBalanceRefresh }: { marketId: string; token: string | null; accountEventRevision: number; onSignIn: () => void; onBalanceRefresh: () => void }) {
   const [market, setMarket] = useState<Market | null>(null);
   const [preview, setPreview] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
@@ -383,7 +383,7 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
         <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} />
         <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades.slice(-20).reverse()} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
         <OrderForm marketId={marketId} listed={listed} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
-        <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
+        <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh + accountEventRevision} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
       </div>
     </div>
   </main>;

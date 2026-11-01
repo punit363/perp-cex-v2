@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { MarketDashboard } from "./MarketDashboard";
+import { MarketDashboard, wsUrl } from "./MarketDashboard";
 import { BalanceDashboard } from "./BalanceDashboard";
 import { MarketTradePage } from "./MarketTradePage";
 import "./index.css";
@@ -79,6 +79,7 @@ export function App() {
   const [balance, setBalance] = useState<Balance | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceError, setBalanceError] = useState("");
+  const [accountEventRevision, setAccountEventRevision] = useState(0);
   const usernameInput = useRef<HTMLInputElement>(null);
   const activeToken = useRef<string | null>(null);
   const returnToMarket = useRef<string | null>(null);
@@ -125,6 +126,40 @@ export function App() {
       if (activeToken.current === token) setBalanceLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!session) return;
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let socket: WebSocket | undefined;
+
+    const connect = () => {
+      if (closed) return;
+      socket = new WebSocket(wsUrl);
+      socket.onopen = () => socket?.send(JSON.stringify({ action: "AUTHENTICATE", token: session.token }));
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (message.action === "AUTHENTICATED") {
+            socket?.send(JSON.stringify({ action: "SUBSCRIBE", type: "ACCOUNT" }));
+          } else if (message.event_type === "ACCOUNT") {
+            setAccountEventRevision((value) => value + 1);
+            void loadBalance(session.token);
+          }
+        } catch { /* Ignore socket greetings and malformed messages. */ }
+      };
+      socket.onclose = () => {
+        if (!closed) retry = setTimeout(connect, 3500);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      socket?.close();
+    };
+  }, [session]);
 
   function showBalances() {
     navigate("balances");
@@ -205,7 +240,7 @@ export function App() {
         </div>
       </header>
 
-      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : <main className="landing">
+      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : <main className="landing">
         <section className="hero-panel" aria-labelledby="hero-heading">
           <div className="hero-panel__glow" aria-hidden="true" />
           <div className="hero-panel__inner">

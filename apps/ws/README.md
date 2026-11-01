@@ -13,7 +13,27 @@ Clients subscribe separately to each event type and market:
 {"action":"SUBSCRIBE","type":"BOOK","market_id":"<market ID>"}
 ```
 
-Replace `BOOK` with `TRADE` or `TICKER` for the other feeds. Use `UNSUBSCRIBE`
-to stop receiving a feed. The server sends the event's `data` object to matching
-clients with `event_type` and `occurred_at_ms`. The frontend loads an initial depth snapshot over HTTP, then applies
-live book updates from this socket.
+Replace `BOOK` with `TRADE`, `TICKER`, or `CANDLE` for the other public feeds.
+Use `UNSUBSCRIBE` to stop receiving a feed. The server sends the event's `data`
+object to matching clients with `event_type` and `occurred_at_ms`. The frontend
+loads an initial snapshot over HTTP, then applies live updates from this socket.
+
+## Private account feed
+
+Authenticate on the already-open socket before subscribing to the account feed:
+
+```json
+{"action":"AUTHENTICATE","token":"<JWT>"}
+```
+
+After receiving `{"action":"AUTHENTICATED"}`, subscribe with:
+
+```json
+{"action":"SUBSCRIBE","type":"ACCOUNT"}
+```
+
+`ACCOUNT` events contain only the authenticated user's changed balance, orders,
+positions, and closed-position market IDs. They are produced by the database
+projector after it has persisted the engine event, and are therefore suitable as
+live deltas after an HTTP snapshot. On reconnect, clients should fetch fresh
+REST snapshots before relying on future events.

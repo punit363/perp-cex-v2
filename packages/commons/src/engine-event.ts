@@ -203,6 +203,53 @@ export const WSEventSchema = z.discriminatedUnion("event_type", [
   CandleEventSchema,
 ]);
 
+const PrivateBalanceSchema = z.object({
+  available: DecimalSchema,
+  reserved: DecimalSchema,
+});
+
+const PrivateOrderSchema = z.object({
+  order_id: IdSchema,
+  market_id: IdSchema,
+  type: z.enum(OrderType),
+  side: z.enum(OrderSide),
+  status: z.enum(OrderStatus),
+  price: DecimalSchema,
+  quantity: DecimalSchema,
+  filled: DecimalSchema,
+  leverage: DecimalSchema,
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+});
+
+const PrivatePositionSchema = z.object({
+  market_id: IdSchema,
+  type: z.enum(PositionType),
+  quantity: DecimalSchema,
+  reserved_margin: DecimalSchema,
+  avg_entry_price: DecimalSchema,
+  unrealized_pnl: DecimalSchema,
+  funding_accrued: DecimalSchema,
+});
+
+export const PrivateAccountEventSchema = EventMetadataSchema.extend({
+  event_type: z.literal("ACCOUNT"),
+  user_id: IdSchema,
+  data: z.object({
+    reason: z.enum([
+      "BALANCE_CHANGE",
+      "PLACE_ORDER",
+      "CANCEL_ORDER",
+      "LIQUIDATION",
+      "FUNDING_SETTLEMENT",
+    ]),
+    balance: PrivateBalanceSchema.optional(),
+    orders: z.array(PrivateOrderSchema).default([]),
+    positions: z.array(PrivatePositionSchema).default([]),
+    closed_position_markets: z.array(IdSchema).default([]),
+  }),
+});
+
 export const EngineEventSchema = z.union([DBEventSchema, WSEventSchema]);
 
 export type DBEvent = z.output<typeof DBEventSchema>;
@@ -210,3 +257,5 @@ export type DBEventInput = z.input<typeof DBEventSchema>;
 export type WSEvent = z.output<typeof WSEventSchema>;
 export type EngineEvent = z.output<typeof EngineEventSchema>;
 export type EngineEventInput = z.input<typeof EngineEventSchema>;
+export type PrivateAccountEvent = z.output<typeof PrivateAccountEventSchema>;
+export type PrivateAccountEventInput = z.input<typeof PrivateAccountEventSchema>;
