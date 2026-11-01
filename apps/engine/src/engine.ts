@@ -1185,21 +1185,16 @@ class Engine {
       //trigger liquidity
       const liquidation_quantity = position.quantity;
 
-      // Cancel open orders across all markets before liquidating this position.
+      // Cancel only resting orders in the liquidated market. Isolated margin
+      // and orders in other markets must remain available to the user.
       for (const open_order_id of [...account.orders]) {
-        const order_market_id = Array.from(this.orderbooks).find(([, book]) =>
-          book.hasOrder(open_order_id)
-        )?.[0];
-        if (!order_market_id) {
-          throw new Error(
-            `Open order ${open_order_id} is missing from the orderbooks`
-          );
-        }
+        if (!orderbook.hasOrder(open_order_id)) continue;
+
         this.cancelOrder({
           action: "CANCEL_ORDER",
           user_id,
           order_id: open_order_id,
-          market_id: order_market_id,
+          market_id,
         });
       }
 
