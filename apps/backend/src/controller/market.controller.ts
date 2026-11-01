@@ -4,6 +4,8 @@ import { AppError } from "../utils/error";
 import { loopback } from "../loopback";
 import type { EngineResponse } from "commons/src";
 import { MarketRepo } from "db/repositories/market.repo";
+import { TradeRepo } from "db/repositories/trade.repo";
+import { CandleRepo } from "db/repositories/candle.repo";
 
 const list_markets = async (_req: Request, res: Response) => {
   try {
@@ -32,6 +34,48 @@ const get_market = async (req: Request, res: Response) => {
         mark_price: market.mark_price?.toString() ?? null,
         last_traded_price: market.last_traded_price?.toString() ?? null,
       },
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+const get_market_trades = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const trades = await TradeRepo.listMarketTrades(market_id);
+    return res.status(200).json(handleResponse("Market trades fetched successfully.", 1, {
+      trades: trades.map((trade) => ({
+        trade_id: trade.trade_id,
+        price: trade.price.toString(),
+        quantity: trade.quantity.toString(),
+        taker_side: trade.taker_order.side,
+        created_at: trade.created_at.toISOString(),
+      })),
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+const get_market_candles = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const candles = await CandleRepo.listMarketCandles(market_id);
+    return res.status(200).json(handleResponse("Market candles fetched successfully.", 1, {
+      candles: candles.map((candle) => ({
+        market_id: candle.market_id,
+        start_ms: Number(candle.start_ms),
+        open: candle.open.toString(),
+        high: candle.high.toString(),
+        low: candle.low.toString(),
+        close: candle.close.toString(),
+        base_volume: candle.base_volume.toString(),
+        quote_volume: candle.quote_volume.toString(),
+        trade_count: candle.trade_count,
+      })),
     }));
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
@@ -101,4 +145,4 @@ const get_position = async (req: Request, res: Response) => {
   }
 };
 
-export { list_markets, get_market, get_depth, get_position };
+export { list_markets, get_market, get_market_trades, get_market_candles, get_depth, get_position };
