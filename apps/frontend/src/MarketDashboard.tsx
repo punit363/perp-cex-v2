@@ -46,7 +46,7 @@ export const previewPairs = [
 const local = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 export const apiBase = local ? "http://localhost:8000/api/v1" : "/api/v1";
 export const wsUrl = local
-  ? `ws://${location.hostname}:7000`
+  ? `ws://${location.hostname}:7001`
   : `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`;
 
 export function partsOf(slug: string) {
@@ -85,10 +85,10 @@ function Sparkline({ values }: { values: number[] }) {
 }
 
 function MarketCard({ market, live, history, onSelect }: { market: MarketCardData; live?: Quote; history: number[]; onSelect: () => void }) {
-  const price = live?.last_traded_price ?? live?.mark_price
-    ?? (market.last_traded_price ? formatScaled(market.last_traded_price) : null)
-    ?? (market.mark_price ? formatScaled(market.mark_price) : null);
-  const source = live?.last_traded_price || market.last_traded_price ? "LAST TRADE" : "MARK PRICE";
+  const price = live?.mark_price ?? live?.last_traded_price
+    ?? (market.mark_price ? formatScaled(market.mark_price) : null)
+    ?? (market.last_traded_price ? formatScaled(market.last_traded_price) : null);
+  const source = live?.mark_price || market.mark_price ? "MARK PRICE" : "LAST TRADE";
   return (
     <button type="button" className="market-card" onClick={onSelect} aria-label={`Open ${market.base} ${market.quote} market`}>
       <div className="market-card__top">
@@ -141,30 +141,43 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
       setFeedState("idle");
       return;
     }
-    setFeedState("connecting");
-    const socket = new WebSocket(wsUrl);
-    socket.onopen = () => {
-      setFeedState("connected");
-      for (const market of markets) {
-        socket.send(JSON.stringify({ action: "SUBSCRIBE", type: "TICKER", market_id: market.market_id }));
-      }
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let socket: WebSocket;
+    const marketIds = new Set(markets.map((market) => market.market_id));
+    const connect = () => {
+      setFeedState("connecting");
+      socket = new WebSocket(wsUrl);
+      socket.onopen = () => {
+        if (stopped) return;
+        setFeedState("connected");
+        for (const market_id of marketIds) {
+          socket.send(JSON.stringify({ action: "SUBSCRIBE", type: "TICKER", market_id }));
+        }
+      };
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (payload.event_type !== "TICKER" || typeof payload.market_id !== "string" || !marketIds.has(payload.market_id)) return;
+          const mark = typeof payload.mark_price === "string" ? payload.mark_price : undefined;
+          const trade = typeof payload.last_traded_price === "string" ? payload.last_traded_price : undefined;
+          if (!mark && !trade) return;
+          const marketId = payload.market_id;
+          setQuotes((current) => ({ ...current, [marketId]: { ...current[marketId], mark_price: mark ?? current[marketId]?.mark_price, last_traded_price: trade ?? current[marketId]?.last_traded_price } }));
+          const point = Number(mark ?? trade);
+          if (Number.isFinite(point)) setHistory((current) => ({ ...current, [marketId]: [...(current[marketId] ?? []), point].slice(-24) }));
+        } catch { /* Ignore the WebSocket greeting and subscription acknowledgements. */ }
+      };
+      socket.onerror = () => setFeedState("offline");
+      socket.onclose = () => {
+        if (!stopped) {
+          setFeedState("offline");
+          retry = setTimeout(connect, 3500);
+        }
+      };
     };
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
-        if (typeof payload.market_id !== "string" || !markets.some((market) => market.market_id === payload.market_id)) return;
-        const mark = typeof payload.mark_price === "string" ? payload.mark_price : undefined;
-        const trade = typeof payload.last_traded_price === "string" ? payload.last_traded_price : undefined;
-        if (!mark && !trade) return;
-        const marketId = payload.market_id;
-        setQuotes((current) => ({ ...current, [marketId]: { ...current[marketId], mark_price: mark ?? current[marketId]?.mark_price, last_traded_price: trade ?? current[marketId]?.last_traded_price } }));
-        const point = Number(trade ?? mark);
-        if (Number.isFinite(point)) setHistory((current) => ({ ...current, [marketId]: [...(current[marketId] ?? []), point].slice(-24) }));
-      } catch { /* The service also sends connection and subscription acknowledgements. */ }
-    };
-    socket.onerror = () => setFeedState("offline");
-    socket.onclose = () => setFeedState("offline");
-    return () => socket.close();
+    connect();
+    return () => { stopped = true; if (retry) clearTimeout(retry); socket?.close(); };
   }, [markets]);
 
   const preview = markets.length === 0;

@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiBase, formatScaled, icons, partsOf, previewPairs, wsUrl, type Market } from "./MarketDashboard";
+import { MarketCandlestickChart } from "./MarketCandlestickChart";
+import { mergeCandles, mergeTrades, tickerFromTrades, type StoredCandle, type TradeRecord } from "./marketData";
 
 type Level = { price: string; quantity: string };
 type Depth = { asks: Level[]; bids: Level[] };
-type PricePoint = { price: string; time: number };
-type LiveTrade = { trade_id: string; price: string; quantity: string; taker_side: "BUY" | "SELL"; time: number };
+type LiveTrade = TradeRecord;
 type Order = {
   order_id: string;
   side: "BUY" | "SELL";
@@ -49,39 +50,6 @@ function grouped(value: string) {
 
 function validPositive(value: string) {
   return decimal.test(value) && Number(value) > 0 && Number.isFinite(Number(value));
-}
-
-function PriceChart({ points, current, connected }: { points: PricePoint[]; current: string | null; connected: boolean }) {
-  const samples = points.map((point) => ({ ...point, numeric: Number(point.price) })).filter((point) => Number.isFinite(point.numeric)).slice(-80);
-  const values = samples.map((point) => point.numeric);
-  const low = values.length ? Math.min(...values) : 0;
-  const high = values.length ? Math.max(...values) : 0;
-  const padding = Math.max((high - low) * .14, high * .001, .00000001);
-  const minimum = low - padding;
-  const maximum = high + padding;
-  const coords = samples.map((point, index) => ({ x: 14 + index / Math.max(samples.length - 1, 1) * 756, y: 296 - (point.numeric - minimum) / (maximum - minimum) * 258 }));
-  const line = coords.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
-  const area = coords.length > 1 ? `${line} L${coords.at(-1)!.x.toFixed(2)} 320 L${coords[0]!.x.toFixed(2)} 320 Z` : "";
-  const last = coords.at(-1);
-
-  return (
-    <section className="trade-chart" aria-label="Live price chart">
-      <div className="trade-panel__heading"><div><span className="trade-panel__eyebrow">PRICE ACTION</span><h2>Price chart</h2></div><span className={`trade-live-pill ${connected ? "" : "is-offline"}`}><i /> {connected ? "LIVE SESSION" : "AWAITING FEED"}</span></div>
-      <div className="trade-chart__summary"><strong>{current ? grouped(current) : "—"}</strong><span>Chart updates received during this session</span></div>
-      <div className="trade-chart__plot">
-        <svg viewBox="0 0 800 320" preserveAspectRatio="none" aria-hidden="true">
-          <defs><linearGradient id="price-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#58c887" stopOpacity=".22" /><stop offset="1" stopColor="#58c887" stopOpacity="0" /></linearGradient></defs>
-          {[38, 103, 168, 233, 296].map((y) => <line key={y} x1="0" x2="800" y1={y} y2={y} stroke="#263037" strokeWidth="1" />)}
-          {[14, 203, 392, 581, 770].map((x) => <line key={x} x1={x} x2={x} y1="0" y2="320" stroke="#20292e" strokeWidth="1" />)}
-          {area && <path d={area} fill="url(#price-area)" />}
-          {line && <path d={line} fill="none" stroke="#5ecb8b" strokeWidth="2.6" vectorEffect="non-scaling-stroke" />}
-          {last && <circle cx={last.x} cy={last.y} r="5" fill="#76d99f" stroke="#183927" strokeWidth="5" />}
-        </svg>
-        {samples.length < 2 && <div className="trade-chart__empty"><span className="trade-chart__empty-icon">⌁</span><strong>Waiting for live price movement</strong><span>The chart builds as market updates arrive.</span></div>}
-      </div>
-      <div className="trade-chart__footer"><span>{samples.length ? new Date(samples[0]!.time).toLocaleTimeString() : "Session start"}</span><span>{samples.length} update{samples.length === 1 ? "" : "s"}</span><span>{samples.length ? new Date(samples.at(-1)!.time).toLocaleTimeString() : "Live"}</span></div>
-    </section>
-  );
 }
 
 function BookSide({ levels, side, onChoosePrice }: { levels: Level[]; side: "ask" | "bid"; onChoosePrice: (price: string) => void }) {
@@ -243,14 +211,21 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
   const [depthRefresh, setDepthRefresh] = useState(0);
   const [feed, setFeed] = useState<"connecting" | "connected" | "offline">("offline");
   const [lastPrice, setLastPrice] = useState<string | null>(null);
-  const [markPrice, setMarkPrice] = useState<string | null>(null);
-  const [points, setPoints] = useState<PricePoint[]>([]);
-  const [trades, setTrades] = useState<LiveTrade[]>([]);
+  const [trades, setTrades] = useState<TradeRecord[]>([]);
+  const [candles, setCandles] = useState<StoredCandle[]>([]);
+  const [candleLoading, setCandleLoading] = useState(false);
+  const [candleError, setCandleError] = useState("");
+  const [candleRefresh, setCandleRefresh] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [now, setNow] = useState(Date.now());
   const [chosenPrice, setChosenPrice] = useState<string | null>(null);
   const [accountRefresh, setAccountRefresh] = useState(0);
+  const bookUpdateVersion = useRef(0);
 
   useEffect(() => {
-    setMarket(null); setDepth(null); setPoints([]); setTrades([]); setLastPrice(null); setMarkPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
+    bookUpdateVersion.current = 0;
+    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
     if (previewPairs.includes(marketId)) {
       setMarket({ market_id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
       setPreview(true); setMarketLoading(false); return;
@@ -261,8 +236,7 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
       .then(({ market }) => {
         setMarket(market);
         const last = market.last_traded_price ? formatScaled(market.last_traded_price).replaceAll(",", "") : null;
-        const mark = market.mark_price ? formatScaled(market.mark_price).replaceAll(",", "") : null;
-        setLastPrice(last); setMarkPrice(mark);
+        setLastPrice(last);
       })
       .catch((cause) => { if (!controller.signal.aborted) setMarketError(cause instanceof Error ? cause.message : "Market unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setMarketLoading(false); });
@@ -270,11 +244,61 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
   }, [marketId]);
 
   useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!market || preview) return;
     const controller = new AbortController();
+    setHistoryLoading(true); setHistoryError("");
+    api<{ trades: { trade_id: string; price: string; quantity: string; taker_side: "BUY" | "SELL"; created_at: string }[] }>(`/market/${encodeURIComponent(market.market_id)}/trades`, { signal: controller.signal })
+      .then(({ trades: history }) => {
+        if (controller.signal.aborted) return;
+        const restored = history.map((trade) => ({
+          trade_id: trade.trade_id,
+          price: formatScaled(trade.price).replaceAll(",", ""),
+          quantity: formatScaled(trade.quantity).replaceAll(",", ""),
+          taker_side: trade.taker_side,
+          time: new Date(trade.created_at).getTime(),
+        })).filter((trade) => Number.isFinite(trade.time) && trade.price !== "—" && trade.quantity !== "—");
+        setTrades((current) => mergeTrades(current, restored));
+      })
+      .catch((cause) => { if (!controller.signal.aborted) setHistoryError(cause instanceof Error ? cause.message : "Trade history unavailable."); })
+      .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
+    return () => controller.abort();
+  }, [market, preview]);
+
+  useEffect(() => {
+    if (!market || preview) return;
+    const controller = new AbortController();
+    setCandleLoading(true); setCandleError("");
+    api<{ candles: (Omit<StoredCandle, "start_ms"> & { start_ms: number })[] }>(`/market/${encodeURIComponent(market.market_id)}/candles`, { signal: controller.signal })
+      .then(({ candles: stored }) => {
+        if (controller.signal.aborted) return;
+        const restored = stored.map((candle) => ({
+          ...candle,
+          open: formatScaled(candle.open).replaceAll(",", ""),
+          high: formatScaled(candle.high).replaceAll(",", ""),
+          low: formatScaled(candle.low).replaceAll(",", ""),
+          close: formatScaled(candle.close).replaceAll(",", ""),
+          base_volume: formatScaled(candle.base_volume).replaceAll(",", ""),
+          quote_volume: formatScaled(candle.quote_volume).replaceAll(",", ""),
+        })).filter((candle) => Number.isSafeInteger(candle.start_ms) && candle.open !== "—");
+        setCandles((current) => mergeCandles(current, restored));
+      })
+      .catch((cause) => { if (!controller.signal.aborted) setCandleError(cause instanceof Error ? cause.message : "Candles unavailable."); })
+      .finally(() => { if (!controller.signal.aborted) setCandleLoading(false); });
+    return () => controller.abort();
+  }, [market, preview, candleRefresh]);
+
+  useEffect(() => {
+    if (!market || preview) return;
+    const controller = new AbortController();
+    const versionAtRequest = bookUpdateVersion.current;
     setDepthLoading(true); setDepthError("");
     api<{ engine_response: { data: Depth } }>(`/market/depth/${encodeURIComponent(market.market_id)}`, { signal: controller.signal })
-      .then((data) => setDepth(data.engine_response.data))
+      .then((data) => { if (bookUpdateVersion.current === versionAtRequest) setDepth(data.engine_response.data); })
       .catch((cause) => { if (!controller.signal.aborted) setDepthError(cause instanceof Error ? cause.message : "Order book unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setDepthLoading(false); });
     return () => controller.abort();
@@ -292,25 +316,36 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
       socket.onopen = () => {
         if (stopped) return;
         setFeed("connected");
-        for (const type of ["BOOK", "TRADE", "TICKER"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.market_id }));
+        for (const type of ["BOOK", "TRADE", "TICKER", "CANDLE"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.market_id }));
+        setDepthRefresh((value) => value + 1);
+        setCandleRefresh((value) => value + 1);
       };
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(String(event.data)) as Record<string, unknown>;
           if (data.market_id !== market.market_id) return;
-          if (Array.isArray(data.bids) && Array.isArray(data.asks)) {
+          if (data.event_type === "BOOK" && Array.isArray(data.bids) && Array.isArray(data.asks)) {
+            bookUpdateVersion.current += 1;
             setDepth({ bids: data.bids as Level[], asks: data.asks as Level[] });
-          } else if (typeof data.trade_id === "string" && typeof data.price === "string" && typeof data.quantity === "string") {
-            const trade = { trade_id: data.trade_id, price: data.price, quantity: data.quantity, taker_side: data.taker_side === "SELL" ? "SELL" as const : "BUY" as const, time: Date.now() };
-            setTrades((current) => [trade, ...current].slice(0, 20));
+            setDepthError("");
+          } else if (data.event_type === "TRADE" && typeof data.trade_id === "string" && typeof data.price === "string" && typeof data.quantity === "string" && (data.taker_side === "BUY" || data.taker_side === "SELL")) {
+            const trade: LiveTrade = { trade_id: data.trade_id, price: data.price, quantity: data.quantity, taker_side: data.taker_side, time: typeof data.occurred_at_ms === "number" ? data.occurred_at_ms : Date.now() };
+            setTrades((current) => mergeTrades(current, [trade]));
             setLastPrice(trade.price);
-            setPoints((current) => [...current, { price: trade.price, time: trade.time }].slice(-80));
-          } else {
-            const mark = typeof data.mark_price === "string" ? data.mark_price : null;
+          } else if (data.event_type === "CANDLE" && typeof data.start_ms === "number" && typeof data.open === "string" && typeof data.high === "string" && typeof data.low === "string" && typeof data.close === "string" && typeof data.base_volume === "string" && typeof data.quote_volume === "string" && typeof data.trade_count === "number") {
+            setCandles((current) => mergeCandles(current, [{
+              start_ms: data.start_ms as number,
+              open: data.open as string,
+              high: data.high as string,
+              low: data.low as string,
+              close: data.close as string,
+              base_volume: data.base_volume as string,
+              quote_volume: data.quote_volume as string,
+              trade_count: data.trade_count as number,
+            }]));
+          } else if (data.event_type === "TICKER") {
             const last = typeof data.last_traded_price === "string" ? data.last_traded_price : null;
-            if (mark) setMarkPrice(mark);
             if (last) setLastPrice(last);
-            if (mark || last) setPoints((current) => [...current, { price: last ?? mark!, time: Date.now() }].slice(-80));
           }
         } catch { /* Ignore the WebSocket greeting and subscription acknowledgements. */ }
       };
@@ -323,20 +358,30 @@ export function MarketTradePage({ marketId, token, onSignIn, onBalanceRefresh }:
 
   const label = market ? partsOf(market.slug) : { base: "MARKET", quote: "" };
   const listed = Boolean(market && !preview);
-  const current = lastPrice ?? markPrice;
+  const ticker = tickerFromTrades(trades, now);
+  const current = trades.at(-1)?.price ?? lastPrice;
   const icon = icons[label.base];
-  const quoteIcon = icons[label.quote];
+
+  const fmt = (value: number | null, maximumFractionDigits = 8) => value === null || !Number.isFinite(value) ? "—" : value.toLocaleString(undefined, { maximumFractionDigits });
+  const changeSign = ticker?.change !== null && ticker?.change !== undefined && ticker.change > 0 ? "+" : "";
+  const changeClass = ticker?.change === null || ticker?.change === undefined ? "" : ticker.change >= 0 ? "is-positive" : "is-negative";
 
   return <main className="trade-page">
     <div className="trade-page__inner">
       <div className="trade-market-head">
-        <div className="trade-market-head__pair"><div className="trade-market-head__icons">{icon ? <img src={icon} alt="" width="38" height="38" /> : <span className="trade-market-head__fallback">↗</span>}{quoteIcon && <img src={quoteIcon} alt="" width="38" height="38" />}</div><h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1></div>
-        <div className="trade-market-head__facts"><div><span>LAST PRICE</span><strong>{lastPrice ? grouped(lastPrice) : "—"}</strong></div><div><span>MARK PRICE</span><strong>{markPrice ? grouped(markPrice) : "—"}</strong></div><div><span>MARKET FEED</span><strong className={feed === "connected" ? "is-connected" : ""}>{preview ? "Preview" : feed === "connected" ? "Live" : feed === "connecting" ? "Connecting" : "Offline"}</strong></div></div>
+        <div className="trade-market-head__pair">{icon ? <img src={icon} alt="" width="44" height="44" /> : <span className="trade-market-head__fallback">↗</span>}<h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1><span className="trade-market-head__badge">PERP</span></div>
+        <div className={`trade-market-head__price ${changeClass}`}>{fmt(ticker?.price ?? null)}</div>
+        <div className="trade-market-head__facts">
+          <div><span>24H Change</span><strong className={changeClass}>{ticker?.change === null || ticker?.change === undefined ? "—" : `${changeSign}${fmt(ticker.change)}  ${changeSign}${fmt(ticker.changePercent, 2)}%`}</strong></div>
+          <div><span>24H High</span><strong>{fmt(ticker?.high ?? null)}</strong></div>
+          <div><span>24H Low</span><strong>{fmt(ticker?.low ?? null)}</strong></div>
+          <div><span>24H Volume ({label.quote})</span><strong>{fmt(ticker?.volume ?? null, 2)}</strong></div>
+        </div>
       </div>
       {(preview || marketError) && <div className="trade-page__notice" role="status">{preview ? "This pair is a visual preview and is not listed for trading yet. Live prices, depth, and orders appear for listed markets." : marketError}</div>}
       <div className="trade-workspace">
-        <PriceChart points={points} current={current} connected={feed === "connected"} />
-        <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
+        <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} />
+        <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades.slice(-20).reverse()} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
         <OrderForm marketId={marketId} listed={listed} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
         <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
       </div>
