@@ -6,14 +6,15 @@ import type {
   PriceLevel,
   RestingOrder,
   SnapshotMarket,
-  SnapshotOrder,
+  SnapshotOrder
 } from "./types";
 import { divideFixed, formatFixed, multiplyFixed } from "./math/fixed-point";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import {
+  calculateFee,
   calculateInitialMargin,
-  calculateNotional,
+  calculateNotional
 } from "./math/financial-math";
 
 class Orderbook {
@@ -24,7 +25,10 @@ class Orderbook {
   private lastTradeId: string;
   private marketId: string;
 
-  constructor(marketData: SnapshotMarket) {
+  constructor(
+    marketData: SnapshotMarket,
+    private readonly makerFeeRate = 0n
+  ) {
     this.marketId = marketData.market_id;
     this.lastTradedPrice = BigInt(marketData.last_traded_price);
     this.lastTradeId = marketData.last_trade_id;
@@ -37,7 +41,7 @@ class Orderbook {
         filled: BigInt(order.filled),
         leverage: BigInt(order.leverage),
         side: order.side,
-        price: BigInt(order.price),
+        price: BigInt(order.price)
       };
       this.insertOrder(order_node);
     });
@@ -54,6 +58,13 @@ class Orderbook {
     );
   }
 
+  private remainingOrderFee(node: OrderNode): bigint {
+    return calculateFee(
+      calculateNotional(node.level.price, node.quantity - node.filled),
+      this.makerFeeRate
+    );
+  }
+
   private updateMarketData(fills: Fill[]) {
     if (fills.length > 0) {
       const lastFill = fills[fills.length - 1];
@@ -67,7 +78,7 @@ class Orderbook {
   public fetchMarketData() {
     return {
       last_trade_id: this.lastTradeId,
-      last_traded_price: this.lastTradedPrice,
+      last_traded_price: this.lastTradedPrice
     };
   }
 
@@ -76,7 +87,7 @@ class Orderbook {
     const ask = this.asks.nextHigherPair(undefined)?.[0];
     return {
       ...(bid !== undefined && { best_bid: formatFixed(bid) }),
-      ...(ask !== undefined && { best_ask: formatFixed(ask) }),
+      ...(ask !== undefined && { best_ask: formatFixed(ask) })
     };
   }
 
@@ -101,7 +112,7 @@ class Orderbook {
           price: order.price,
           remaining_qty: 0n,
           head: null,
-          tail: null,
+          tail: null
         };
         this.asks.set(price, price_level);
       }
@@ -112,7 +123,7 @@ class Orderbook {
           price: order.price,
           remaining_qty: 0n,
           head: null,
-          tail: null,
+          tail: null
         };
       }
       this.bids.set(price, price_level);
@@ -131,7 +142,7 @@ class Orderbook {
       level: price_level,
       side: order.side,
       prev: null,
-      next: null,
+      next: null
     };
 
     order_node.prev = price_level.tail;
@@ -202,7 +213,7 @@ class Orderbook {
       order_id,
       rem_qty,
       price,
-      leverage: order.leverage,
+      leverage: order.leverage
     };
   }
 
@@ -227,20 +238,20 @@ class Orderbook {
     for (const [price, level] of this.asks.entries()) {
       asks.push({
         price: formatFixed(price),
-        quantity: formatFixed(level.remaining_qty),
+        quantity: formatFixed(level.remaining_qty)
       });
     }
 
     for (const [price, level] of this.bids.entriesReversed()) {
       bids.push({
         price: formatFixed(price),
-        quantity: formatFixed(level.remaining_qty),
+        quantity: formatFixed(level.remaining_qty)
       });
     }
 
     let depth = {
       asks,
-      bids,
+      bids
     };
 
     return depth;
@@ -261,7 +272,7 @@ class Orderbook {
           filled: String(current_node.filled),
           leverage: String(current_node.leverage),
           side: current_node.side,
-          price: String(price),
+          price: String(price)
         };
         orders.push(order_node);
         current_node = current_node.next;
@@ -280,7 +291,7 @@ class Orderbook {
           filled: String(current_node.filled),
           leverage: String(current_node.leverage),
           side: current_node.side,
-          price: String(price),
+          price: String(price)
         };
         orders.push(order_node);
         current_node = current_node.next;
@@ -292,11 +303,7 @@ class Orderbook {
 
   recreateOrderbookState() {}
 
-  previewMarketOrder(order: Order): { price: bigint; quantity: bigint }[] {
-    if (order.type !== OrderType.MARKET) {
-      throw new Error("Only market orders can be previewed");
-    }
-
+  previewOrder(order: Order): { price: bigint; quantity: bigint }[] {
     const fills: { price: bigint; quantity: bigint }[] = [];
     let remaining_qty = order.quantity - order.filled;
     let remaining_amount = order.price;
@@ -306,10 +313,17 @@ class Orderbook {
         : this.bids.entriesReversed();
 
     for (const [price, level] of levels) {
+      if (
+        order.type === OrderType.LIMIT &&
+        ((order.side === OrderSide.BUY && price > order.price) ||
+          (order.side === OrderSide.SELL && price < order.price))
+      ) {
+        break;
+      }
       let node = level.head;
       while (node && remaining_qty > 0n) {
         const affordable_qty =
-          order.side === OrderSide.BUY
+          order.type === OrderType.MARKET && order.side === OrderSide.BUY
             ? divideFixed(remaining_amount, price, "floor")
             : remaining_qty;
         if (affordable_qty === 0n) return fills;
@@ -321,7 +335,7 @@ class Orderbook {
         if (fill_qty > 0n) {
           fills.push({ price, quantity: fill_qty });
           remaining_qty -= fill_qty;
-          if (order.side === OrderSide.BUY) {
+          if (order.type === OrderType.MARKET && order.side === OrderSide.BUY) {
             remaining_amount -= multiplyFixed(fill_qty, price, "ceil");
           }
         }
@@ -355,12 +369,15 @@ class Orderbook {
           const rem_odr_qty = odr_quantity - odr_filled;
           const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
 
           let maker_order_status = OrderStatus.OPEN;
           if (quantity == current_node.filled) {
@@ -379,8 +396,11 @@ class Orderbook {
             price,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -419,12 +439,15 @@ class Orderbook {
           const rem_odr_qty = odr_quantity - odr_filled;
           const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
 
           let maker_order_status = OrderStatus.OPEN;
           if (quantity == current_node.filled) {
@@ -443,8 +466,11 @@ class Orderbook {
             price,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -469,9 +495,9 @@ class Orderbook {
         filled: odr_filled,
         status: order.status,
         rem_qty,
-        rem_amt: 0n,
+        rem_amt: 0n
       },
-      fills,
+      fills
     };
   }
 
@@ -496,12 +522,15 @@ class Orderbook {
           const rem_odr_qty = odr_quantity - odr_filled;
           const fill_qty = min(rem_odr_qty, quantity - current_node.filled);
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
           let maker_order_status = OrderStatus.OPEN;
           if (quantity == current_node.filled) {
             maker_order_status = OrderStatus.FILLED;
@@ -518,9 +547,12 @@ class Orderbook {
             taker_user_id: order.user_id,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -573,6 +605,7 @@ class Orderbook {
             continue;
           }
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
@@ -580,6 +613,8 @@ class Orderbook {
           odr_amount -= multiplyFixed(fill_qty, price, "ceil");
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
 
           let maker_order_status = OrderStatus.OPEN;
           if (quantity == current_node.filled) {
@@ -597,9 +632,12 @@ class Orderbook {
             taker_user_id: order.user_id,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -624,9 +662,9 @@ class Orderbook {
         filled: odr_filled,
         status: order.status,
         rem_amt,
-        rem_qty: 0n,
+        rem_qty: 0n
       },
-      fills,
+      fills
     };
   }
 
@@ -677,6 +715,7 @@ class Orderbook {
             current_node.quantity - current_node.filled
           );
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           filled += fill_qty;
           current_node.filled += fill_qty;
@@ -684,6 +723,8 @@ class Orderbook {
           net_amt += multiplyFixed(fill_qty, price, "floor");
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
 
           let maker_order_status = OrderStatus.OPEN;
           if (current_node.quantity == current_node.filled) {
@@ -701,9 +742,12 @@ class Orderbook {
             taker_user_id: user_id,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -729,6 +773,7 @@ class Orderbook {
             current_node.quantity - current_node.filled
           );
           const margin_before = this.remainingOrderMargin(current_node);
+          const fee_before = this.remainingOrderFee(current_node);
 
           filled += fill_qty;
           current_node.filled += fill_qty;
@@ -736,6 +781,8 @@ class Orderbook {
           net_amt += multiplyFixed(fill_qty, price, "floor");
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
+          const maker_order_fee_consumed =
+            fee_before - this.remainingOrderFee(current_node);
 
           let maker_order_status = OrderStatus.OPEN;
           if (current_node.quantity == current_node.filled) {
@@ -753,9 +800,12 @@ class Orderbook {
             taker_user_id: user_id,
             maker_leverage: current_node.leverage,
             maker_order_margin_consumed,
+            maker_order_fee_consumed,
+            maker_order_fee_remaining: this.remainingOrderFee(current_node),
+            taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty,
+            filled: fill_qty
           };
           fills.push(fill);
 
@@ -772,7 +822,7 @@ class Orderbook {
       filled,
       net_amt,
       rem_qty: quantity - filled,
-      fills: fills || [],
+      fills: fills || []
     };
   }
 }

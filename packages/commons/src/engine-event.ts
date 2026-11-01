@@ -13,7 +13,7 @@ const IdSchema = z.string().min(1);
 const BalanceChangeSchema = z.object({
   user_id: IdSchema,
   available: ScaledIntegerSchema,
-  reserved: ScaledIntegerSchema,
+  reserved: ScaledIntegerSchema
 });
 
 const OrderChangeSchema = z.object({
@@ -28,8 +28,10 @@ const OrderChangeSchema = z.object({
   filled: ScaledIntegerSchema,
   leverage: ScaledIntegerSchema,
   initial_margin: ScaledIntegerSchema,
+  initial_fee: ScaledIntegerSchema,
   remaining_order_margin: ScaledIntegerSchema,
-  slippage: ScaledIntegerSchema,
+  remaining_order_fee: ScaledIntegerSchema,
+  slippage: ScaledIntegerSchema
 });
 
 const OrderUpdateSchema = z.object({
@@ -38,6 +40,7 @@ const OrderUpdateSchema = z.object({
   market_id: IdSchema,
   status: z.literal(OrderStatus.CANCELLED),
   remaining_order_margin: ScaledIntegerSchema,
+  remaining_order_fee: ScaledIntegerSchema
 });
 
 const FillChangeSchema = z.object({
@@ -50,7 +53,10 @@ const FillChangeSchema = z.object({
   filled: ScaledIntegerSchema,
   maker_leverage: ScaledIntegerSchema,
   maker_order_margin_consumed: ScaledIntegerSchema,
-  maker_order_status: z.enum(OrderStatus),
+  maker_order_fee_consumed: ScaledIntegerSchema,
+  maker_order_fee_remaining: ScaledIntegerSchema,
+  taker_fee: ScaledIntegerSchema,
+  maker_order_status: z.enum(OrderStatus)
 });
 
 const PositionSchema = z.object({
@@ -59,25 +65,25 @@ const PositionSchema = z.object({
   reserved_margin: ScaledIntegerSchema,
   avg_entry_price: ScaledIntegerSchema,
   unrealized_pnl: ScaledIntegerSchema,
-  funding_accrued: ScaledIntegerSchema,
+  funding_accrued: ScaledIntegerSchema
 });
 
 const PositionChangeSchema = z.object({
   user_id: IdSchema,
   market_id: IdSchema,
-  position: PositionSchema.nullable(),
+  position: PositionSchema.nullable()
 });
 
 const DepthLevelSchema = z.object({
   price: DecimalSchema,
-  quantity: DecimalSchema,
+  quantity: DecimalSchema
 });
 
 const MarketDataChangeSchema = z.object({
   market_id: IdSchema,
   mark_price: ScaledIntegerSchema.optional(),
   last_traded_price: ScaledIntegerSchema.optional(),
-  last_trade_id: IdSchema.optional(),
+  last_trade_id: IdSchema.optional()
 });
 
 const CandleChangeSchema = z.object({
@@ -89,7 +95,7 @@ const CandleChangeSchema = z.object({
   close: ScaledIntegerSchema,
   base_volume: ScaledIntegerSchema,
   quote_volume: ScaledIntegerSchema,
-  trade_count: z.number().int().positive(),
+  trade_count: z.number().int().positive()
 });
 
 const InsuranceFundLedgerEntrySchema = z.object({
@@ -101,11 +107,11 @@ const InsuranceFundLedgerEntrySchema = z.object({
     "LIQUIDATION_FEE",
     "LIQUIDATION_SURPLUS",
     "SHORTFALL_COVER",
-    "UNCOVERED_SHORTFALL",
+    "UNCOVERED_SHORTFALL"
   ]),
   amount: ScaledIntegerSchema,
   balance_after: ScaledIntegerSchema,
-  uncovered_shortfall: ScaledIntegerSchema,
+  uncovered_shortfall: ScaledIntegerSchema
 });
 
 const InsuranceFundChangeSchema = z.object({
@@ -115,12 +121,31 @@ const InsuranceFundChangeSchema = z.object({
   total_liquidation_surplus: ScaledIntegerSchema,
   total_shortfall_covered: ScaledIntegerSchema,
   total_uncovered_shortfall: ScaledIntegerSchema,
-  entries: z.array(InsuranceFundLedgerEntrySchema),
+  entries: z.array(InsuranceFundLedgerEntrySchema)
+});
+
+const TradingFeeLedgerEntrySchema = z.object({
+  entry_id: IdSchema,
+  trade_id: IdSchema,
+  order_id: IdSchema,
+  market_id: IdSchema,
+  user_id: IdSchema,
+  role: z.enum(["MAKER", "TAKER"]),
+  amount: ScaledIntegerSchema,
+  balance_after: ScaledIntegerSchema
+});
+
+const TradingFeeAccountChangeSchema = z.object({
+  collateral_asset: IdSchema,
+  balance: ScaledIntegerSchema,
+  total_maker_fees: ScaledIntegerSchema,
+  total_taker_fees: ScaledIntegerSchema,
+  entries: z.array(TradingFeeLedgerEntrySchema)
 });
 
 const EventMetadataSchema = z.object({
   source_message_id: IdSchema,
-  occurred_at_ms: z.number().int().nonnegative(),
+  occurred_at_ms: z.number().int().nonnegative()
 });
 
 export const DBEventSchema = EventMetadataSchema.extend({
@@ -131,7 +156,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     "CANCEL_ORDER",
     "LIQUIDATION",
     "MARK_PRICE_UPDATE",
-    "FUNDING_SETTLEMENT",
+    "FUNDING_SETTLEMENT"
   ]),
   changes: z.object({
     balances: z.array(BalanceChangeSchema).default([]),
@@ -142,11 +167,12 @@ export const DBEventSchema = EventMetadataSchema.extend({
     market_data: z.array(MarketDataChangeSchema).default([]),
     candles: z.array(CandleChangeSchema).default([]),
     insurance_fund: z.array(InsuranceFundChangeSchema).default([]),
-  }),
+    trading_fee_account: z.array(TradingFeeAccountChangeSchema).default([])
+  })
 });
 
 const WSMetadataSchema = EventMetadataSchema.extend({
-  destination: z.literal("ws"),
+  destination: z.literal("ws")
 });
 
 const BookEventSchema = WSMetadataSchema.extend({
@@ -154,8 +180,8 @@ const BookEventSchema = WSMetadataSchema.extend({
   data: z.object({
     market_id: IdSchema,
     bids: z.array(DepthLevelSchema),
-    asks: z.array(DepthLevelSchema),
-  }),
+    asks: z.array(DepthLevelSchema)
+  })
 });
 
 const TradeEventSchema = WSMetadataSchema.extend({
@@ -165,8 +191,8 @@ const TradeEventSchema = WSMetadataSchema.extend({
     market_id: IdSchema,
     price: DecimalSchema,
     quantity: DecimalSchema,
-    taker_side: z.enum(OrderSide),
-  }),
+    taker_side: z.enum(OrderSide)
+  })
 });
 
 const TickerEventSchema = WSMetadataSchema.extend({
@@ -177,8 +203,8 @@ const TickerEventSchema = WSMetadataSchema.extend({
     last_traded_price: DecimalSchema.optional(),
     last_trade_id: IdSchema.optional(),
     best_bid: DecimalSchema.optional(),
-    best_ask: DecimalSchema.optional(),
-  }),
+    best_ask: DecimalSchema.optional()
+  })
 });
 
 const CandleEventSchema = WSMetadataSchema.extend({
@@ -192,20 +218,20 @@ const CandleEventSchema = WSMetadataSchema.extend({
     close: DecimalSchema,
     base_volume: DecimalSchema,
     quote_volume: DecimalSchema,
-    trade_count: z.number().int().positive(),
-  }),
+    trade_count: z.number().int().positive()
+  })
 });
 
 export const WSEventSchema = z.discriminatedUnion("event_type", [
   BookEventSchema,
   TradeEventSchema,
   TickerEventSchema,
-  CandleEventSchema,
+  CandleEventSchema
 ]);
 
 const PrivateBalanceSchema = z.object({
   available: DecimalSchema,
-  reserved: DecimalSchema,
+  reserved: DecimalSchema
 });
 
 const PrivateOrderSchema = z.object({
@@ -218,8 +244,10 @@ const PrivateOrderSchema = z.object({
   quantity: DecimalSchema,
   filled: DecimalSchema,
   leverage: DecimalSchema,
+  initial_fee: DecimalSchema,
+  remaining_order_fee: DecimalSchema,
   created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  updated_at: z.string().datetime()
 });
 
 const PrivatePositionSchema = z.object({
@@ -229,7 +257,7 @@ const PrivatePositionSchema = z.object({
   reserved_margin: DecimalSchema,
   avg_entry_price: DecimalSchema,
   unrealized_pnl: DecimalSchema,
-  funding_accrued: DecimalSchema,
+  funding_accrued: DecimalSchema
 });
 
 export const PrivateAccountEventSchema = EventMetadataSchema.extend({
@@ -241,13 +269,13 @@ export const PrivateAccountEventSchema = EventMetadataSchema.extend({
       "PLACE_ORDER",
       "CANCEL_ORDER",
       "LIQUIDATION",
-      "FUNDING_SETTLEMENT",
+      "FUNDING_SETTLEMENT"
     ]),
     balance: PrivateBalanceSchema.optional(),
     orders: z.array(PrivateOrderSchema).default([]),
     positions: z.array(PrivatePositionSchema).default([]),
-    closed_position_markets: z.array(IdSchema).default([]),
-  }),
+    closed_position_markets: z.array(IdSchema).default([])
+  })
 });
 
 export const EngineEventSchema = z.union([DBEventSchema, WSEventSchema]);
@@ -258,4 +286,6 @@ export type WSEvent = z.output<typeof WSEventSchema>;
 export type EngineEvent = z.output<typeof EngineEventSchema>;
 export type EngineEventInput = z.input<typeof EngineEventSchema>;
 export type PrivateAccountEvent = z.output<typeof PrivateAccountEventSchema>;
-export type PrivateAccountEventInput = z.input<typeof PrivateAccountEventSchema>;
+export type PrivateAccountEventInput = z.input<
+  typeof PrivateAccountEventSchema
+>;

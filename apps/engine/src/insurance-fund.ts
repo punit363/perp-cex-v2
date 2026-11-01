@@ -1,7 +1,7 @@
 import type {
   InsuranceFundLedgerEntry,
   InsuranceFundSettlement,
-  SnapshotInsuranceFund,
+  SnapshotInsuranceFund
 } from "./types";
 
 type SettlementInput = {
@@ -23,14 +23,14 @@ class InsuranceFund {
   constructor(
     private readonly collateralAsset: string,
     initialBalance: bigint,
-    snapshot?: SnapshotInsuranceFund,
+    snapshot?: SnapshotInsuranceFund
   ) {
     if (initialBalance < 0n) {
       throw new Error("Insurance fund initial balance cannot be negative");
     }
     if (snapshot && snapshot.collateral_asset !== collateralAsset) {
       throw new Error(
-        `Insurance fund collateral mismatch: expected ${collateralAsset}, received ${snapshot.collateral_asset}`,
+        `Insurance fund collateral mismatch: expected ${collateralAsset}, received ${snapshot.collateral_asset}`
       );
     }
 
@@ -57,6 +57,7 @@ class InsuranceFund {
     const entries: InsuranceFundLedgerEntry[] = [];
     let liquidation_fee = 0n;
     let liquidation_surplus = 0n;
+    let user_refund = 0n;
     let shortfall_covered = 0n;
     let uncovered_shortfall = 0n;
 
@@ -65,7 +66,7 @@ class InsuranceFund {
         input.requested_liquidation_fee < input.execution_equity
           ? input.requested_liquidation_fee
           : input.execution_equity;
-      liquidation_surplus = input.execution_equity - liquidation_fee;
+      user_refund = input.execution_equity - liquidation_fee;
 
       if (liquidation_fee > 0n) {
         this.balance += liquidation_fee;
@@ -75,20 +76,8 @@ class InsuranceFund {
             input,
             "LIQUIDATION_FEE",
             liquidation_fee,
-            this.balance,
-          ),
-        );
-      }
-      if (liquidation_surplus > 0n) {
-        this.balance += liquidation_surplus;
-        this.totalLiquidationSurplus += liquidation_surplus;
-        entries.push(
-          this.createEntry(
-            input,
-            "LIQUIDATION_SURPLUS",
-            liquidation_surplus,
-            this.balance,
-          ),
+            this.balance
+          )
         );
       }
     } else {
@@ -104,8 +93,8 @@ class InsuranceFund {
             input,
             "SHORTFALL_COVER",
             -shortfall_covered,
-            this.balance,
-          ),
+            this.balance
+          )
         );
       }
       if (uncovered_shortfall > 0n) {
@@ -116,8 +105,8 @@ class InsuranceFund {
             "UNCOVERED_SHORTFALL",
             0n,
             this.balance,
-            uncovered_shortfall,
-          ),
+            uncovered_shortfall
+          )
         );
       }
     }
@@ -131,9 +120,10 @@ class InsuranceFund {
       total_uncovered_shortfall: this.totalUncoveredShortfall,
       liquidation_fee,
       liquidation_surplus,
+      user_refund,
       shortfall_covered,
       uncovered_shortfall,
-      entries,
+      entries
     };
   }
 
@@ -144,7 +134,7 @@ class InsuranceFund {
       total_liquidation_fees: String(this.totalLiquidationFees),
       total_liquidation_surplus: String(this.totalLiquidationSurplus),
       total_shortfall_covered: String(this.totalShortfallCovered),
-      total_uncovered_shortfall: String(this.totalUncoveredShortfall),
+      total_uncovered_shortfall: String(this.totalUncoveredShortfall)
     };
   }
 
@@ -153,7 +143,7 @@ class InsuranceFund {
     type: InsuranceFundLedgerEntry["type"],
     amount: bigint,
     balance_after: bigint,
-    uncovered_shortfall = 0n,
+    uncovered_shortfall = 0n
   ): InsuranceFundLedgerEntry {
     return {
       entry_id: `${input.entry_id_prefix}:${type}`,
@@ -163,7 +153,7 @@ class InsuranceFund {
       type,
       amount,
       balance_after,
-      uncovered_shortfall,
+      uncovered_shortfall
     };
   }
 }

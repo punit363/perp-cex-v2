@@ -12,19 +12,29 @@ async function list_orders(req: Request, res: Response) {
     const user_id = req.user_id as string;
     const market_id = req.query.market_id;
     const view = req.query.view;
-    if (typeof market_id !== "string" || !market_id || (view !== "open" && view !== "history")) {
-      return res.status(400).json(handleError("Valid market_id and view are required", 0));
+    if (
+      typeof market_id !== "string" ||
+      !market_id ||
+      (view !== "open" && view !== "history")
+    ) {
+      return res
+        .status(400)
+        .json(handleError("Valid market_id and view are required", 0));
     }
     const orders = await OrderRepo.listUserOrders(user_id, market_id, view);
-    return res.status(200).json(handleResponse("Orders fetched successfully.", 1, {
-      orders: orders.map((order) => ({
-        ...order,
-        price: order.price.toString(),
-        quantity: order.quantity.toString(),
-        filled: order.filled.toString(),
-        leverage: order.leverage.toString(),
-      })),
-    }));
+    return res.status(200).json(
+      handleResponse("Orders fetched successfully.", 1, {
+        orders: orders.map((order) => ({
+          ...order,
+          price: order.price.toString(),
+          quantity: order.quantity.toString(),
+          filled: order.filled.toString(),
+          leverage: order.leverage.toString(),
+          initial_fee: order.initial_fee.toString(),
+          remaining_order_fee: order.remaining_order_fee.toString()
+        }))
+      })
+    );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     return res.status(500).json(handleError(err.message, 0));
@@ -49,10 +59,10 @@ async function place_order(req: Request, res: Response) {
       status: OrderStatus.OPEN,
       side,
       type,
-      leverage,
+      leverage
     };
 
-    const engine_response = await loopback(engine_request) as EngineResponse;
+    const engine_response = (await loopback(engine_request)) as EngineResponse;
 
     if (engine_response.status == 0) {
       return res.status(400).json(handleError(engine_response.message, 0));
@@ -60,7 +70,7 @@ async function place_order(req: Request, res: Response) {
 
     return res.status(200).json(
       handleResponse("Order placed successfully.", 1, {
-        engine_response,
+        engine_response
       })
     );
   } catch (error) {
@@ -81,10 +91,10 @@ async function cancel_order(req: Request, res: Response) {
       action: "CANCEL_ORDER",
       user_id,
       order_id,
-      market_id,
+      market_id
     };
 
-    const engine_response = await loopback(engine_request) as EngineResponse;
+    const engine_response = (await loopback(engine_request)) as EngineResponse;
 
     if (engine_response.status == 0) {
       return res.status(400).json(handleError(engine_response.message, 0));
@@ -92,7 +102,7 @@ async function cancel_order(req: Request, res: Response) {
 
     return res.status(200).json(
       handleResponse("Order cancelled successfully.", 1, {
-        engine_response,
+        engine_response
       })
     );
   } catch (error) {

@@ -2,7 +2,7 @@ import type {
   OrderSide,
   OrderStatus,
   OrderType,
-  PositionType,
+  PositionType
 } from "commons/src/order.type";
 
 interface CollateralBalance {
@@ -117,6 +117,34 @@ interface SnapshotInsuranceFund {
   total_uncovered_shortfall: string;
 }
 
+interface SnapshotTradingFeeAccount {
+  collateral_asset: string;
+  balance: string;
+  total_maker_fees: string;
+  total_taker_fees: string;
+}
+
+type TradingFeeRole = "MAKER" | "TAKER";
+
+interface TradingFeeLedgerEntry {
+  entry_id: string;
+  trade_id: string;
+  order_id: string;
+  market_id: string;
+  user_id: string;
+  role: TradingFeeRole;
+  amount: bigint;
+  balance_after: bigint;
+}
+
+interface TradingFeeSettlement {
+  collateral_asset: string;
+  balance: bigint;
+  total_maker_fees: bigint;
+  total_taker_fees: bigint;
+  entries: TradingFeeLedgerEntry[];
+}
+
 type InsuranceFundLedgerEntryType =
   | "LIQUIDATION_FEE"
   | "LIQUIDATION_SURPLUS"
@@ -143,13 +171,14 @@ interface InsuranceFundSettlement {
   total_uncovered_shortfall: bigint;
   liquidation_fee: bigint;
   liquidation_surplus: bigint;
+  user_refund: bigint;
   shortfall_covered: bigint;
   uncovered_shortfall: bigint;
   entries: InsuranceFundLedgerEntry[];
 }
 
 interface EngineSnapshot {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   snapshot_time: number;
   scale: number;
   last_applied_stream_id: string;
@@ -157,6 +186,7 @@ interface EngineSnapshot {
   accounts: SnapshotAccount[];
   mark_prices: SnapshotMarkPrice[];
   insurance_fund?: SnapshotInsuranceFund;
+  trading_fee_account?: SnapshotTradingFeeAccount;
 }
 
 interface Fill {
@@ -168,6 +198,9 @@ interface Fill {
   price: bigint;
   maker_leverage: bigint;
   maker_order_margin_consumed: bigint;
+  maker_order_fee_consumed: bigint;
+  maker_order_fee_remaining: bigint;
+  taker_fee: bigint;
   maker_order_status: OrderStatus;
   filled: bigint;
 }
@@ -201,10 +234,14 @@ export type {
   SnapshotAccount,
   SnapshotMarkPrice,
   SnapshotInsuranceFund,
+  SnapshotTradingFeeAccount,
+  TradingFeeLedgerEntry,
+  TradingFeeRole,
+  TradingFeeSettlement,
   InsuranceFundLedgerEntry,
   InsuranceFundSettlement,
   EngineSnapshot,
   Fill,
   PlaceOrderResult,
-  markPriceMetadata,
+  markPriceMetadata
 };

@@ -11,13 +11,13 @@ datasource db {
 }
 
 model User {
-  user_id     String  @id @default(uuid())
+  user_id     String     @id @default(uuid())
   username    String
   password    String
   orders      Order[]
   positions   Position[]
-  maker_fills Fill[]  @relation("maker_user")
-  taker_fills Fill[]  @relation("taker_user")
+  maker_fills Fill[]     @relation("maker_user")
+  taker_fills Fill[]     @relation("taker_user")
 }
 
 enum OrderType {
@@ -49,23 +49,30 @@ enum InsuranceFundEntryType {
   UNCOVERED_SHORTFALL
 }
 
+enum TradingFeeRole {
+  MAKER
+  TAKER
+}
+
 model Order {
-  order_id                        String      @id
-  user_id                         String
-  market_id                       String
-  type                            OrderType
-  side                            OrderSide
-  price                           BigInt
-  slippage                        BigInt
-  quantity                        BigInt
-  filled                          BigInt
-  initial_margin                  BigInt
-  leverage                        BigInt
-  remaining_order_margin          BigInt
-  status                          OrderStatus
-  arrival_seq                     BigInt      @unique @default(autoincrement())
-  created_at                      DateTime    @default(now())
-  updated_at                      DateTime    @updatedAt
+  order_id               String      @id
+  user_id                String
+  market_id              String
+  type                   OrderType
+  side                   OrderSide
+  price                  BigInt
+  slippage               BigInt
+  quantity               BigInt
+  filled                 BigInt
+  initial_margin         BigInt
+  initial_fee            BigInt
+  leverage               BigInt
+  remaining_order_margin BigInt
+  remaining_order_fee    BigInt
+  status                 OrderStatus
+  arrival_seq            BigInt      @unique @default(autoincrement())
+  created_at             DateTime    @default(now())
+  updated_at             DateTime    @updatedAt
 
   maker_fills Fill[] @relation("maker")
   taker_fills Fill[] @relation("taker")
@@ -73,7 +80,7 @@ model Order {
 }
 
 model Market {
-  market_id         String  @id @default(uuid())
+  market_id         String   @id @default(uuid())
   slug              String
   imageUrl          String
   mark_price        BigInt?
@@ -83,15 +90,15 @@ model Market {
 }
 
 model Candle {
-  market_id     String
-  start_ms      BigInt
-  open          BigInt
-  high          BigInt
-  low           BigInt
-  close         BigInt
-  base_volume   BigInt
-  quote_volume  BigInt
-  trade_count   Int
+  market_id    String
+  start_ms     BigInt
+  open         BigInt
+  high         BigInt
+  low          BigInt
+  close        BigInt
+  base_volume  BigInt
+  quote_volume BigInt
+  trade_count  Int
 
   market Market @relation(fields: [market_id], references: [market_id])
 
@@ -101,6 +108,8 @@ model Candle {
 model Fill {
   quantity   BigInt
   price      BigInt
+  maker_fee  BigInt
+  taker_fee  BigInt
   created_at DateTime @default(now())
   trade_id   String   @id
 
@@ -119,15 +128,40 @@ model Fill {
   taker_user  User  @relation("taker_user", fields: [taker_user_id], references: [user_id])
 }
 
-model Position {
-  user_id          String
+model TradingFeeAccount {
+  collateral_asset String   @id
+  balance          BigInt
+  total_maker_fees BigInt
+  total_taker_fees BigInt
+  updated_at       DateTime @updatedAt
+}
+
+model TradingFeeLedgerEntry {
+  entry_id         String         @id
+  collateral_asset String
+  trade_id         String
+  order_id         String
   market_id        String
-  type             PositionType
-  quantity         BigInt
-  reserved_margin  BigInt
-  avg_entry_price  BigInt
-  unrealized_pnl   BigInt
-  funding_accrued  BigInt
+  user_id          String
+  role             TradingFeeRole
+  amount           BigInt
+  balance_after    BigInt
+  created_at       DateTime       @default(now())
+
+  @@index([collateral_asset, created_at])
+  @@index([user_id, created_at])
+  @@index([trade_id])
+}
+
+model Position {
+  user_id         String
+  market_id       String
+  type            PositionType
+  quantity        BigInt
+  reserved_margin BigInt
+  avg_entry_price BigInt
+  unrealized_pnl  BigInt
+  funding_accrued BigInt
 
   user User @relation(fields: [user_id], references: [user_id])
 
@@ -135,9 +169,9 @@ model Position {
 }
 
 model Collateral {
-  user_id         String      @id
-  available       BigInt
-  reserved        BigInt
+  user_id   String @id
+  available BigInt
+  reserved  BigInt
 }
 
 model InsuranceFund {
@@ -156,11 +190,11 @@ model InsuranceFundLedgerEntry {
   market_id            String
   user_id              String
   liquidation_order_id String
-  type                  InsuranceFundEntryType
-  amount                BigInt
-  balance_after         BigInt
-  uncovered_shortfall   BigInt
-  created_at            DateTime               @default(now())
+  type                 InsuranceFundEntryType
+  amount               BigInt
+  balance_after        BigInt
+  uncovered_shortfall  BigInt
+  created_at           DateTime               @default(now())
 
   @@index([collateral_asset, created_at])
   @@index([liquidation_order_id])

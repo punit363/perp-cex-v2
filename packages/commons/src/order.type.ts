@@ -2,22 +2,22 @@ enum OrderStatus {
   OPEN = "OPEN",
   PARTIALLY_FILLED = "PARTIALLY_FILLED",
   FILLED = "FILLED",
-  CANCELLED = "CANCELLED",
+  CANCELLED = "CANCELLED"
 }
 
 enum OrderSide {
   BUY = "BUY",
-  SELL = "SELL",
+  SELL = "SELL"
 }
 
 enum OrderType {
   MARKET = "MARKET",
-  LIMIT = "LIMIT",
+  LIMIT = "LIMIT"
 }
 
 enum PositionType {
   LONG = "LONG",
-  SHORT = "SHORT",
+  SHORT = "SHORT"
 }
 
 interface OrderDBUpdate {
@@ -31,8 +31,10 @@ interface OrderDBUpdate {
   quantity: bigint;
   filled: bigint;
   initial_margin: bigint;
+  initial_fee: bigint;
   leverage: bigint;
   remaining_order_margin: bigint;
+  remaining_order_fee: bigint;
   status: OrderStatus;
 }
 interface FillDBUpdate {
@@ -45,6 +47,9 @@ interface FillDBUpdate {
   filled: bigint;
   maker_leverage: bigint;
   maker_order_margin_consumed: bigint;
+  maker_order_fee_consumed: bigint;
+  maker_order_fee_remaining: bigint;
+  taker_fee: bigint;
   maker_order_status: OrderStatus;
 }
 interface PositionDBUpdate {

@@ -2,7 +2,7 @@ import { prisma } from "..";
 import type {
   FillDBUpdate,
   OrderDBUpdate,
-  PositionDBUpdate,
+  PositionDBUpdate
 } from "commons/src/order.type";
 import { OrderStatus } from "commons/src/order.type";
 
@@ -19,14 +19,21 @@ export type CandleDBUpdate = {
 };
 
 const OrderRepo = {
-  listUserOrders: async (user_id: string, market_id: string, view: "open" | "history") => {
+  listUserOrders: async (
+    user_id: string,
+    market_id: string,
+    view: "open" | "history"
+  ) => {
     return prisma.order.findMany({
       where: {
         user_id,
         market_id,
-        status: { in: view === "open"
-          ? [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
-          : [OrderStatus.FILLED, OrderStatus.CANCELLED] },
+        status: {
+          in:
+            view === "open"
+              ? [OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED]
+              : [OrderStatus.FILLED, OrderStatus.CANCELLED]
+        }
       },
       orderBy: { updated_at: "desc" },
       take: 50,
@@ -39,9 +46,11 @@ const OrderRepo = {
         quantity: true,
         filled: true,
         leverage: true,
+        initial_fee: true,
+        remaining_order_fee: true,
         created_at: true,
-        updated_at: true,
-      },
+        updated_at: true
+      }
     });
   },
 
@@ -60,16 +69,18 @@ const OrderRepo = {
         quantity: true,
         filled: true,
         leverage: true,
+        initial_fee: true,
+        remaining_order_fee: true,
         created_at: true,
-        updated_at: true,
-      },
+        updated_at: true
+      }
     });
   },
 
   insertOrder: async (order: OrderDBUpdate) => {
     await prisma.order.createMany({
       data: [order],
-      skipDuplicates: true,
+      skipDuplicates: true
     });
   },
 
@@ -79,36 +90,46 @@ const OrderRepo = {
     market_id: string;
     status: OrderStatus;
     remaining_order_margin: bigint;
+    remaining_order_fee: bigint;
   }) => {
     await prisma.order.update({
       where: {
         order_id: update.order_id,
         user_id: update.user_id,
-        market_id: update.market_id,
+        market_id: update.market_id
       },
       data: {
         status: update.status,
         remaining_order_margin: update.remaining_order_margin,
-      },
+        remaining_order_fee: update.remaining_order_fee
+      }
     });
   },
 
-  applyFillsAndCandles: async (fills: FillDBUpdate[], candles: CandleDBUpdate[]) => {
-    if (candles.length && !fills.length) throw new Error("Candle update has no fills");
+  applyFillsAndCandles: async (
+    fills: FillDBUpdate[],
+    candles: CandleDBUpdate[]
+  ) => {
+    if (candles.length && !fills.length)
+      throw new Error("Candle update has no fills");
     return prisma.$transaction(async (tx) => {
       let insertedCount = 0;
       for (const fill of fills) {
         const inserted = await tx.fill.createMany({
-          data: [{
-            trade_id: fill.trade_id,
-            maker_order_id: fill.maker_order_id,
-            taker_order_id: fill.taker_order_id,
-            maker_user_id: fill.maker_user_id,
-            taker_user_id: fill.taker_user_id,
-            price: fill.price,
-            quantity: fill.filled,
-          }],
-          skipDuplicates: true,
+          data: [
+            {
+              trade_id: fill.trade_id,
+              maker_order_id: fill.maker_order_id,
+              taker_order_id: fill.taker_order_id,
+              maker_user_id: fill.maker_user_id,
+              taker_user_id: fill.taker_user_id,
+              price: fill.price,
+              quantity: fill.filled,
+              maker_fee: fill.maker_order_fee_consumed,
+              taker_fee: fill.taker_fee
+            }
+          ],
+          skipDuplicates: true
         });
         if (!inserted.count) continue;
         insertedCount += 1;
@@ -116,14 +137,19 @@ const OrderRepo = {
           where: { order_id: fill.maker_order_id },
           data: {
             filled: { increment: fill.filled },
-            remaining_order_margin: { decrement: fill.maker_order_margin_consumed },
-            status: fill.maker_order_status,
-          },
+            remaining_order_margin: {
+              decrement: fill.maker_order_margin_consumed
+            },
+            remaining_order_fee: fill.maker_order_fee_remaining,
+            status: fill.maker_order_status
+          }
         });
       }
 
       if (insertedCount !== 0 && insertedCount !== fills.length) {
-        throw new Error("Partial duplicate fill event cannot be projected safely");
+        throw new Error(
+          "Partial duplicate fill event cannot be projected safely"
+        );
       }
       if (insertedCount === fills.length) {
         for (const candle of candles) {
@@ -140,9 +166,18 @@ const OrderRepo = {
           `;
         }
       }
-      const persisted = await Promise.all(candles.map((candle) => tx.candle.findUnique({
-        where: { market_id_start_ms: { market_id: candle.market_id, start_ms: candle.start_ms } },
-      })));
+      const persisted = await Promise.all(
+        candles.map((candle) =>
+          tx.candle.findUnique({
+            where: {
+              market_id_start_ms: {
+                market_id: candle.market_id,
+                start_ms: candle.start_ms
+              }
+            }
+          })
+        )
+      );
       // A replayed pre-candle fill can already exist without a candle in its
       // original request-time bucket; historical backfill used fill insert time.
       return persisted.filter((candle) => candle !== null);
@@ -154,17 +189,17 @@ const OrderRepo = {
       where: {
         user_id_market_id: {
           user_id: position.user_id,
-          market_id: position.market_id,
-        },
+          market_id: position.market_id
+        }
       },
       update: position,
-      create: position,
+      create: position
     });
   },
 
   deletePosition: async (user_id: string, market_id: string) => {
     await prisma.position.deleteMany({ where: { user_id, market_id } });
-  },
+  }
 };
 
 export default OrderRepo;

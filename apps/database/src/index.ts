@@ -6,6 +6,7 @@ import { formatScaledInteger } from "commons/src/fixed";
 import type { CandleDBUpdate } from "db/repositories/order.repo";
 import type { DBEvent } from "commons/src/engine-event";
 import InsuranceFundRepo from "db/repositories/insurance-fund.repo";
+import TradingFeeRepo from "db/repositories/trading-fee.repo";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 
 const redis = new RedisHandler();
@@ -18,8 +19,8 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
     ...event.changes.order_updates.map((order) => order.order_id),
     ...event.changes.fills.flatMap((fill) => [
       fill.maker_order_id,
-      fill.taker_order_id,
-    ]),
+      fill.taker_order_id
+    ])
   ]);
   const persistedOrders = await OrderRepo.listOrdersByIds([...orderIds]);
   const userIds = new Set([
@@ -28,7 +29,7 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
     ...event.changes.positions.map((position) => position.user_id),
     ...event.changes.insurance_fund.flatMap((fund) =>
       fund.entries.map((entry) => entry.user_id)
-    ),
+    )
   ]);
 
   for (const user_id of userIds) {
@@ -37,8 +38,11 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
     );
     const positions = event.changes.positions
       .filter(
-        (change): change is typeof change & { position: NonNullable<typeof change.position> } =>
-          change.user_id === user_id && change.position !== null
+        (
+          change
+        ): change is typeof change & {
+          position: NonNullable<typeof change.position>;
+        } => change.user_id === user_id && change.position !== null
       )
       .map((change) => ({
         market_id: change.market_id,
@@ -55,7 +59,7 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
         ),
         funding_accrued: formatScaledInteger(
           BigInt(change.position.funding_accrued)
-        ),
+        )
       }));
 
     await redis.publishPrivateAccountEvent({
@@ -68,8 +72,8 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
         ...(balance && {
           balance: {
             available: formatScaledInteger(BigInt(balance.available)),
-            reserved: formatScaledInteger(BigInt(balance.reserved)),
-          },
+            reserved: formatScaledInteger(BigInt(balance.reserved))
+          }
         }),
         orders: persistedOrders
           .filter((order) => order.user_id === user_id)
@@ -83,16 +87,18 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
             quantity: formatScaledInteger(order.quantity),
             filled: formatScaledInteger(order.filled),
             leverage: formatScaledInteger(order.leverage),
+            initial_fee: formatScaledInteger(order.initial_fee),
+            remaining_order_fee: formatScaledInteger(order.remaining_order_fee),
             created_at: order.created_at.toISOString(),
-            updated_at: order.updated_at.toISOString(),
+            updated_at: order.updated_at.toISOString()
           })),
         positions,
         closed_position_markets: event.changes.positions
           .filter(
             (change) => change.user_id === user_id && change.position === null
           )
-          .map((change) => change.market_id),
-      },
+          .map((change) => change.market_id)
+      }
     });
   }
 }
@@ -112,24 +118,29 @@ redis
         quantity: BigInt(order.quantity),
         filled: BigInt(order.filled),
         initial_margin: BigInt(order.initial_margin),
+        initial_fee: BigInt(order.initial_fee),
         leverage: BigInt(order.leverage),
         remaining_order_margin: BigInt(order.remaining_order_margin),
-        status: order.status,
+        remaining_order_fee: BigInt(order.remaining_order_fee),
+        status: order.status
       });
     }
 
     const fills = event.changes.fills.map((fill) => ({
-        trade_id: fill.trade_id,
-        maker_order_id: fill.maker_order_id,
-        taker_order_id: fill.taker_order_id,
-        maker_user_id: fill.maker_user_id,
-        taker_user_id: fill.taker_user_id,
-        price: BigInt(fill.price),
-        filled: BigInt(fill.filled),
-        maker_leverage: BigInt(fill.maker_leverage),
-        maker_order_margin_consumed: BigInt(fill.maker_order_margin_consumed),
-        maker_order_status: fill.maker_order_status,
-      }));
+      trade_id: fill.trade_id,
+      maker_order_id: fill.maker_order_id,
+      taker_order_id: fill.taker_order_id,
+      maker_user_id: fill.maker_user_id,
+      taker_user_id: fill.taker_user_id,
+      price: BigInt(fill.price),
+      filled: BigInt(fill.filled),
+      maker_leverage: BigInt(fill.maker_leverage),
+      maker_order_margin_consumed: BigInt(fill.maker_order_margin_consumed),
+      maker_order_fee_consumed: BigInt(fill.maker_order_fee_consumed),
+      maker_order_fee_remaining: BigInt(fill.maker_order_fee_remaining),
+      taker_fee: BigInt(fill.taker_fee),
+      maker_order_status: fill.maker_order_status
+    }));
     const candles: CandleDBUpdate[] = event.changes.candles.map((candle) => ({
       market_id: candle.market_id,
       start_ms: BigInt(candle.start_ms),
@@ -139,9 +150,12 @@ redis
       close: BigInt(candle.close),
       base_volume: BigInt(candle.base_volume),
       quote_volume: BigInt(candle.quote_volume),
-      trade_count: candle.trade_count,
+      trade_count: candle.trade_count
     }));
-    const persistedCandles = await OrderRepo.applyFillsAndCandles(fills, candles);
+    const persistedCandles = await OrderRepo.applyFillsAndCandles(
+      fills,
+      candles
+    );
 
     for (const update of event.changes.order_updates) {
       await OrderRepo.updateOrderStatus({
@@ -150,6 +164,7 @@ redis
         market_id: update.market_id,
         status: update.status,
         remaining_order_margin: BigInt(update.remaining_order_margin),
+        remaining_order_fee: BigInt(update.remaining_order_fee)
       });
     }
 
@@ -167,7 +182,7 @@ redis
         reserved_margin: BigInt(change.position.reserved_margin),
         avg_entry_price: BigInt(change.position.avg_entry_price),
         unrealized_pnl: BigInt(change.position.unrealized_pnl),
-        funding_accrued: BigInt(change.position.funding_accrued),
+        funding_accrued: BigInt(change.position.funding_accrued)
       });
     }
 
@@ -182,19 +197,22 @@ redis
     for (const fundChange of event.changes.insurance_fund) {
       await InsuranceFundRepo.projectChange(fundChange);
     }
+    for (const feeChange of event.changes.trading_fee_account) {
+      await TradingFeeRepo.projectChange(feeChange);
+    }
 
     for (const change of event.changes.market_data) {
       await MarketRepo.updateMarketData({
         market_id: change.market_id,
         ...(change.mark_price !== undefined && {
-          mark_price: BigInt(change.mark_price),
+          mark_price: BigInt(change.mark_price)
         }),
         ...(change.last_traded_price !== undefined && {
-          last_traded_price: BigInt(change.last_traded_price),
+          last_traded_price: BigInt(change.last_traded_price)
         }),
         ...(change.last_trade_id !== undefined && {
-          last_trade_id: change.last_trade_id,
-        }),
+          last_trade_id: change.last_trade_id
+        })
       });
     }
     for (const candle of persistedCandles) {
@@ -208,7 +226,7 @@ redis
         close: formatScaledInteger(candle.close),
         base_volume: formatScaledInteger(candle.base_volume),
         quote_volume: formatScaledInteger(candle.quote_volume),
-        trade_count: candle.trade_count,
+        trade_count: candle.trade_count
       });
     }
     await publishPrivateAccountUpdates(event);
