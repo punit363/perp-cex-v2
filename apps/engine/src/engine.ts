@@ -397,7 +397,10 @@ class Engine {
   private getBalance(request: CommandOf<"GET_BALANCE">): EngineResponse {
     const account = this.accounts.get(request.user_id);
     if (!account) {
-      return engine_response("User Account does not exist", 0);
+      return engine_response("Balance Retrieved", 1, {
+        available: "0",
+        reserved: "0",
+      });
     }
 
     return engine_response("Balance Retrieved", 1, {
