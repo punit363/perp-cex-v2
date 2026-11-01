@@ -47,6 +47,17 @@ type WSEventDraft<Event extends WSEvent = WSEvent> = Event extends WSEvent
   ? Pick<Event, "event_type" | "data">
   : never;
 type DBEventDraft = Pick<DBEventInput, "event_type" | "changes">;
+type CandleDraft = {
+  market_id: string;
+  start_ms: number;
+  open: bigint;
+  high: bigint;
+  low: bigint;
+  close: bigint;
+  base_volume: bigint;
+  quote_volume: bigint;
+  trade_count: number;
+};
 
 export type EngineCommandResult = {
   response: EngineResponse;
@@ -74,6 +85,8 @@ class Engine {
     ws: WSEventDraft[];
     changedBooks: Set<string>;
     changedTickers: Set<string>;
+    candles: Map<string, CandleDraft>;
+    timestampMs: number;
   } | null = null;
 
   private constructor(marketIds: string[]) {
@@ -265,11 +278,18 @@ class Engine {
     replayTimestamp?: number,
     sourceMessageId?: string
   ): EngineCommandResult {
+    const sourceTimestamp = sourceMessageId ? Number(sourceMessageId.split("-")[0]) : undefined;
+    const timestampMs = sourceTimestamp ?? replayTimestamp ?? Date.now();
+    if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
+      throw new Error("Invalid engine command timestamp");
+    }
     const events = {
       db: [] as DBEventDraft[],
       ws: [] as WSEventDraft[],
       changedBooks: new Set<string>(),
       changedTickers: new Set<string>(),
+      candles: new Map<string, CandleDraft>(),
+      timestampMs,
     };
     this.commandEvents = events;
     this.currentSourceMessageId = sourceMessageId ?? randomUUID();
@@ -302,6 +322,11 @@ class Engine {
           },
         });
       }
+      if (events.candles.size) {
+        const lastDbEvent = events.db.at(-1);
+        if (!lastDbEvent) throw new Error("Trade has no database event");
+        lastDbEvent.changes.candles = [...events.candles.values()];
+      }
       // Project all changes from one command together: orders must exist before fills.
       const dbEvents: DBEventDraft[] =
         events.db.length > 1
@@ -326,6 +351,9 @@ class Engine {
                   ),
                   market_data: events.db.flatMap(
                     (event) => event.changes.market_data ?? []
+                  ),
+                  candles: events.db.flatMap(
+                    (event) => event.changes.candles ?? []
                   ),
                 },
               },
@@ -355,6 +383,27 @@ class Engine {
 
   private emitTrades(market_id: string, taker_side: OrderSide, fills: Fill[]): void {
     for (const fill of fills) {
+      const events = this.commandEvents;
+      if (events) {
+        const start_ms = Math.floor(events.timestampMs / 60_000) * 60_000;
+        const key = `${market_id}:${start_ms}`;
+        const candle = events.candles.get(key);
+        const quoteVolume = calculateNotional(fill.price, fill.filled);
+        if (candle) {
+          candle.high = candle.high > fill.price ? candle.high : fill.price;
+          candle.low = candle.low < fill.price ? candle.low : fill.price;
+          candle.close = fill.price;
+          candle.base_volume += fill.filled;
+          candle.quote_volume += quoteVolume;
+          candle.trade_count += 1;
+        } else {
+          events.candles.set(key, {
+            market_id, start_ms, open: fill.price, high: fill.price,
+            low: fill.price, close: fill.price, base_volume: fill.filled,
+            quote_volume: quoteVolume, trade_count: 1,
+          });
+        }
+      }
       this.emitWsEvent({
         event_type: "TRADE",
         data: {

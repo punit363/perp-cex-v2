@@ -2,6 +2,8 @@ import RedisHandler from "./redis";
 import UserRepo from "db/repositories/user.repo";
 import OrderRepo from "db/repositories/order.repo";
 import { MarketRepo } from "db/repositories/market.repo";
+import { formatScaledInteger } from "commons/src/fixed";
+import type { CandleDBUpdate } from "db/repositories/order.repo";
 
 const redis = new RedisHandler();
 
@@ -26,8 +28,7 @@ redis
       });
     }
 
-    for (const fill of event.changes.fills) {
-      await OrderRepo.applyFill({
+    const fills = event.changes.fills.map((fill) => ({
         trade_id: fill.trade_id,
         maker_order_id: fill.maker_order_id,
         taker_order_id: fill.taker_order_id,
@@ -38,8 +39,19 @@ redis
         maker_leverage: BigInt(fill.maker_leverage),
         maker_order_margin_consumed: BigInt(fill.maker_order_margin_consumed),
         maker_order_status: fill.maker_order_status,
-      });
-    }
+      }));
+    const candles: CandleDBUpdate[] = event.changes.candles.map((candle) => ({
+      market_id: candle.market_id,
+      start_ms: BigInt(candle.start_ms),
+      open: BigInt(candle.open),
+      high: BigInt(candle.high),
+      low: BigInt(candle.low),
+      close: BigInt(candle.close),
+      base_volume: BigInt(candle.base_volume),
+      quote_volume: BigInt(candle.quote_volume),
+      trade_count: candle.trade_count,
+    }));
+    const persistedCandles = await OrderRepo.applyFillsAndCandles(fills, candles);
 
     for (const update of event.changes.order_updates) {
       await OrderRepo.updateOrderStatus({
@@ -89,6 +101,20 @@ redis
         ...(change.last_trade_id !== undefined && {
           last_trade_id: change.last_trade_id,
         }),
+      });
+    }
+    for (const candle of persistedCandles) {
+      await redis.publishCandle({
+        source_message_id: event.source_message_id,
+        market_id: candle.market_id,
+        start_ms: Number(candle.start_ms),
+        open: formatScaledInteger(candle.open),
+        high: formatScaledInteger(candle.high),
+        low: formatScaledInteger(candle.low),
+        close: formatScaledInteger(candle.close),
+        base_volume: formatScaledInteger(candle.base_volume),
+        quote_volume: formatScaledInteger(candle.quote_volume),
+        trade_count: candle.trade_count,
       });
     }
   })

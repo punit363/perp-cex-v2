@@ -72,6 +72,23 @@ model Market {
   mark_price        BigInt?
   last_traded_price BigInt?
   last_trade_id     String?
+  candles           Candle[]
+}
+
+model Candle {
+  market_id     String
+  start_ms      BigInt
+  open          BigInt
+  high          BigInt
+  low           BigInt
+  close         BigInt
+  base_volume   BigInt
+  quote_volume  BigInt
+  trade_count   Int
+
+  market Market @relation(fields: [market_id], references: [market_id])
+
+  @@id([market_id, start_ms])
 }
 
 model Fill {

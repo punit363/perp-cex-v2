@@ -80,6 +80,18 @@ const MarketDataChangeSchema = z.object({
   last_trade_id: IdSchema.optional(),
 });
 
+const CandleChangeSchema = z.object({
+  market_id: IdSchema,
+  start_ms: z.number().int().nonnegative(),
+  open: ScaledIntegerSchema,
+  high: ScaledIntegerSchema,
+  low: ScaledIntegerSchema,
+  close: ScaledIntegerSchema,
+  base_volume: ScaledIntegerSchema,
+  quote_volume: ScaledIntegerSchema,
+  trade_count: z.number().int().positive(),
+});
+
 const EventMetadataSchema = z.object({
   source_message_id: IdSchema,
   occurred_at_ms: z.number().int().nonnegative(),
@@ -102,6 +114,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     fills: z.array(FillChangeSchema).default([]),
     positions: z.array(PositionChangeSchema).default([]),
     market_data: z.array(MarketDataChangeSchema).default([]),
+    candles: z.array(CandleChangeSchema).default([]),
   }),
 });
 
@@ -141,10 +154,26 @@ const TickerEventSchema = WSMetadataSchema.extend({
   }),
 });
 
+const CandleEventSchema = WSMetadataSchema.extend({
+  event_type: z.literal("CANDLE"),
+  data: z.object({
+    market_id: IdSchema,
+    start_ms: z.number().int().nonnegative(),
+    open: DecimalSchema,
+    high: DecimalSchema,
+    low: DecimalSchema,
+    close: DecimalSchema,
+    base_volume: DecimalSchema,
+    quote_volume: DecimalSchema,
+    trade_count: z.number().int().positive(),
+  }),
+});
+
 export const WSEventSchema = z.discriminatedUnion("event_type", [
   BookEventSchema,
   TradeEventSchema,
   TickerEventSchema,
+  CandleEventSchema,
 ]);
 
 export const EngineEventSchema = z.union([DBEventSchema, WSEventSchema]);

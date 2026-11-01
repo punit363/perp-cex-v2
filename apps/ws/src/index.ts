@@ -1,13 +1,13 @@
 import type { ServerWebSocket } from "bun";
 import RedisHandler from "./redis";
 
-type PublicEventType = "BOOK" | "TRADE" | "TICKER";
+type PublicEventType = "BOOK" | "TRADE" | "TICKER" | "CANDLE";
 
 const redis = new RedisHandler();
 const subscriptions = new Map<ServerWebSocket<unknown>, Set<string>>();
 
 function isPublicEventType(value: unknown): value is PublicEventType {
-  return value === "BOOK" || value === "TRADE" || value === "TICKER";
+  return value === "BOOK" || value === "TRADE" || value === "TICKER" || value === "CANDLE";
 }
 
 function subscriptionKey(type: PublicEventType, market_id: string): string {
@@ -15,7 +15,7 @@ function subscriptionKey(type: PublicEventType, market_id: string): string {
 }
 
 Bun.serve({
-  port: 7000,
+  port: Number(process.env.WS_PORT || 7001),
   fetch(req, server) {
     const success = server.upgrade(req);
     if (success) return undefined;
@@ -72,7 +72,11 @@ Bun.serve({
 void redis
   .readEvents(async (event) => {
     const key = subscriptionKey(event.event_type, event.data.market_id);
-    const payload = JSON.stringify(event.data);
+    const payload = JSON.stringify({
+      event_type: event.event_type,
+      occurred_at_ms: event.occurred_at_ms,
+      ...event.data,
+    });
     for (const [ws, topics] of subscriptions) {
       if (!topics.has(key)) continue;
       try {
