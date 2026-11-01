@@ -1,6 +1,8 @@
+export type SpotVenue = "coinbase" | "kraken";
+
 export interface SpotQuote {
   market_id: string;
-  venue: "coinbase" | "kraken";
+  venue: SpotVenue;
   source_symbol: string;
   bid: string;
   ask: string;
