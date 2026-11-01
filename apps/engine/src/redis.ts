@@ -92,7 +92,8 @@ class RedisHandler {
       sourceMessageId: string
     ) => EngineCommandResult,
     initialStreamId: string,
-    onApplied: (streamId: string) => void
+    onApplied: (streamId: string) => void,
+    shouldResumeLiquidations: () => boolean,
   ) {
     await this.connect();
     let lastAppliedStreamId = initialStreamId;
@@ -204,6 +205,12 @@ class RedisHandler {
       for (const message of messages) {
         await applyMessage(message, true);
       }
+    }
+
+    if (shouldResumeLiquidations()) {
+      await this.client.xAdd("engine", "*", {
+        request: JSON.stringify({ action: "RETRY_LIQUIDATIONS" }),
+      });
     }
 
     while (true) {

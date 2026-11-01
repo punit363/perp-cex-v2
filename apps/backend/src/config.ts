@@ -11,7 +11,7 @@ const CONFIG = {
   port:process.env.API_PORT,
   db_url: process.env.DB_URL,
   jwt_secret_key:process.env.JWT_SECRET ||"secret",
-  admin_token:process.env.ADMIN_TOKEN ||"random123"
+  admin_token:process.env.ADMIN_TOKEN
 };
 
 export default CONFIG;

@@ -16,7 +16,8 @@ while (true) {
       (request, replayTimestamp, sourceMessageId) =>
         engine!.processEngineCommand(request, replayTimestamp, sourceMessageId),
       engine.getLastAppliedStreamId(),
-      (streamId) => engine!.recordAppliedStreamId(streamId)
+      (streamId) => engine!.recordAppliedStreamId(streamId),
+      () => engine!.hasActiveLiquidations(),
     );
     throw new Error("Engine request reader stopped unexpectedly");
   } catch (error) {

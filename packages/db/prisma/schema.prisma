@@ -42,6 +42,18 @@ enum PositionType {
   SHORT
 }
 
+enum PositionState {
+  HEALTHY
+  LIQUIDATING
+  BANKRUPT
+}
+
+enum LiquidationStatus {
+  LIQUIDATING
+  COMPLETED
+  BANKRUPT
+}
+
 enum InsuranceFundEntryType {
   LIQUIDATION_FEE
   LIQUIDATION_SURPLUS
@@ -86,6 +98,11 @@ model Market {
   mark_price        BigInt?
   last_traded_price BigInt?
   last_trade_id     String?
+  trading_halted    Boolean  @default(false)
+  maintenance_margin_rate BigInt?
+  liquidation_fee_rate BigInt?
+  max_leverage BigInt?
+  max_liquidation_quantity BigInt?
   candles           Candle[]
 }
 
@@ -162,10 +179,61 @@ model Position {
   avg_entry_price BigInt
   unrealized_pnl  BigInt
   funding_accrued BigInt
+  state           PositionState @default(HEALTHY)
+  liquidation_id  String?
+  liquidation_attempts Int @default(0)
 
   user User @relation(fields: [user_id], references: [user_id])
 
   @@id([user_id, market_id])
+}
+
+model Liquidation {
+  liquidation_id String @id
+  user_id String
+  market_id String
+  status LiquidationStatus
+  initial_quantity BigInt
+  remaining_quantity BigInt
+  total_filled BigInt
+  total_realized_pnl BigInt
+  total_liquidation_fee BigInt
+  total_user_refund BigInt
+  total_shortfall_covered BigInt
+  total_uncovered_shortfall BigInt
+  attempts Int
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  attempt_records LiquidationAttempt[]
+
+  @@index([user_id, market_id, created_at])
+}
+
+model LiquidationAttempt {
+  attempt_id String @id
+  liquidation_id String
+  user_id String
+  market_id String
+  status LiquidationStatus
+  attempt Int
+  initial_quantity BigInt
+  filled_quantity BigInt
+  remaining_quantity BigInt
+  mark_price BigInt
+  realized_pnl BigInt
+  liquidation_fee BigInt
+  user_refund BigInt
+  shortfall_covered BigInt
+  uncovered_shortfall BigInt
+  created_at DateTime @default(now())
+  liquidation Liquidation @relation(fields: [liquidation_id], references: [liquidation_id])
+
+  @@index([user_id, market_id, created_at])
+}
+
+model ProcessedEngineEvent {
+  source_message_id String @id
+  processed_at DateTime @default(now())
 }
 
 model Collateral {

@@ -9,6 +9,11 @@ export const MarketRepo = {
         imageUrl: true,
         mark_price: true,
         last_traded_price: true,
+        trading_halted: true,
+        maintenance_margin_rate: true,
+        liquidation_fee_rate: true,
+        max_leverage: true,
+        max_liquidation_quantity: true,
       },
       orderBy: { slug: "asc" },
     });
@@ -23,6 +28,11 @@ export const MarketRepo = {
         imageUrl: true,
         mark_price: true,
         last_traded_price: true,
+        trading_halted: true,
+        maintenance_margin_rate: true,
+        liquidation_fee_rate: true,
+        max_leverage: true,
+        max_liquidation_quantity: true,
       },
     });
   },

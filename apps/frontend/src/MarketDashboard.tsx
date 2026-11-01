@@ -26,6 +26,7 @@ export type Market = {
   imageUrl: string;
   mark_price: string | null;
   last_traded_price: string | null;
+  trading_halted?: boolean;
 };
 type Balance = { available: string; reserved: string };
 type Quote = { mark_price?: string; last_traded_price?: string };
@@ -96,7 +97,7 @@ function MarketCard({ market, live, history, onSelect }: { market: MarketCardDat
         <img src={icons[market.base] || market.imageUrl || usdIcon} alt="" width="36" height="36" />
       </div>
       <div className="market-card__price">{price ? <>{price}<small>{market.quote === "PERP" ? "USD" : market.quote}</small></> : "—"}</div>
-      <span className={`market-card__badge ${price ? "has-price" : ""}`}>{price ? source : market.preview ? "PREVIEW PAIR" : "AWAITING PRICE"}</span>
+      <span className={`market-card__badge ${price ? "has-price" : ""}`}>{market.trading_halted ? "TRADING HALTED" : price ? source : market.preview ? "PREVIEW PAIR" : "AWAITING PRICE"}</span>
       <Sparkline values={history} />
     </button>
   );
@@ -161,8 +162,11 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
           if (payload.event_type !== "TICKER" || typeof payload.market_id !== "string" || !marketIds.has(payload.market_id)) return;
           const mark = typeof payload.mark_price === "string" ? payload.mark_price : undefined;
           const trade = typeof payload.last_traded_price === "string" ? payload.last_traded_price : undefined;
-          if (!mark && !trade) return;
           const marketId = payload.market_id;
+          if (typeof payload.trading_halted === "boolean") {
+            setMarkets((current) => current.map((market) => market.market_id === marketId ? { ...market, trading_halted: payload.trading_halted as boolean } : market));
+          }
+          if (!mark && !trade) return;
           setQuotes((current) => ({ ...current, [marketId]: { ...current[marketId], mark_price: mark ?? current[marketId]?.mark_price, last_traded_price: trade ?? current[marketId]?.last_traded_price } }));
           const point = Number(mark ?? trade);
           if (Number.isFinite(point)) setHistory((current) => ({ ...current, [marketId]: [...(current[marketId] ?? []), point].slice(-24) }));

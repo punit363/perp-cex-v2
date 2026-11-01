@@ -2,6 +2,14 @@ import type { OrderSide, OrderStatus, OrderType } from "./order.type";
 
 type RequestToEngine =
   | {
+      action: "SET_MARKET_RISK";
+      market_id: string;
+      maintenance_margin_rate: string;
+      liquidation_fee_rate: string;
+      max_leverage: string | null;
+      max_liquidation_quantity: string | null;
+    }
+  | {
       action: "ONRAMP";
       user_id: string;
       amount: string;

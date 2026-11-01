@@ -2,13 +2,14 @@ import {
   divideRounded,
   formatFixed,
   multiplyFixed,
-  SCALE
+  SCALE,
 } from "./math/fixed-point";
-import type {
-  EngineSnapshot,
-  Fill,
-  markPriceMetadata,
-  SnapshotMarket
+import {
+  PositionState,
+  type EngineSnapshot,
+  type Fill,
+  type markPriceMetadata,
+  type SnapshotMarket,
 } from "./types";
 import { engine_response, generate_liquidation_order_id } from "./utils";
 import type { EngineCommand } from "./zod/z";
@@ -19,7 +20,7 @@ import {
   calculateFee,
   calculateInitialMargin,
   calculateMaintenanceMargin,
-  calculateNotional
+  calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
 import type { DBEventInput, WSEvent } from "commons/src/engine-event";
@@ -27,12 +28,13 @@ import {
   OrderSide,
   OrderStatus,
   OrderType,
-  PositionType
+  PositionType,
 } from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
 import InsuranceFund from "./insurance-fund";
 import TradingFeeAccount from "./trading-fee-account";
+import { calculateLiquidationFill, calculateLiquidationPrice, calculatePositionRisk } from "./liquidation";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -62,6 +64,16 @@ type CandleDraft = {
   trade_count: number;
 };
 
+type MarketRiskConfig = {
+  maintenanceMarginRate: bigint;
+  liquidationFeeRate: bigint;
+  maxLeverage: bigint | null;
+  maxLiquidationQuantity: bigint | null;
+};
+type MarketDefinition = {
+  market_id: string;
+};
+
 export type EngineCommandResult = {
   response: EngineResponse;
   dbEvents: DBEventDraft[];
@@ -73,7 +85,11 @@ class Engine {
   private accounts = new AccountStore([]);
   private markPrices: Map<string, bigint> = new Map();
   private markPriceMetadata: Map<string, markPriceMetadata> = new Map();
+  private marketRiskConfigs = new Map<string, MarketRiskConfig>();
   private positionUsersByMarket: Map<string, Set<string>> = new Map(); //market->users>
+  private haltedMarkets = new Set<string>();
+  private liquidationQueue = new Map<string, { user_id: string; market_id: string }>();
+  private processingLiquidations = false;
   private readonly MAX_MARK_PRICE_AGE_MS;
   private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS;
   private MAINTENANCE_MARGIN_RATE: bigint;
@@ -97,7 +113,7 @@ class Engine {
     timestampMs: number;
   } | null = null;
 
-  private constructor(marketIds: string[]) {
+  private constructor(markets: MarketDefinition[]) {
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
     this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
       MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
@@ -127,18 +143,26 @@ class Engine {
         snapshot.trading_fee_account
       );
       this.lastAppliedStreamId = snapshot.last_applied_stream_id;
+      this.haltedMarkets = new Set(snapshot.halted_markets ?? []);
       snapshot.mark_prices.forEach((mark) => {
         this.markPrices.set(mark.market_id, BigInt(mark.price));
         this.markPriceMetadata.set(mark.market_id, {
           producer_id: mark.producer_id,
           source_timestamp: mark.source_timestamp,
-          sequence: BigInt(mark.sequence)
+          sequence: BigInt(mark.sequence),
         });
       });
 
       this.accounts = new AccountStore(snapshot.accounts);
 
       snapshot.markets.forEach((market_data) => {
+        const saved = market_data.risk_config;
+        this.marketRiskConfigs.set(market_data.market_id, this.validateRiskConfig({
+          maintenanceMarginRate: saved ? BigInt(saved.maintenance_margin_rate) : this.MAINTENANCE_MARGIN_RATE,
+          liquidationFeeRate: saved ? BigInt(saved.liquidation_fee_rate) : this.LIQUIDATION_FEE_RATE,
+          maxLeverage: saved?.max_leverage ? BigInt(saved.max_leverage) : null,
+          maxLiquidationQuantity: saved?.max_liquidation_quantity ? BigInt(saved.max_liquidation_quantity) : null,
+        }));
         const orderbook = new Orderbook(market_data, this.MAKER_FEE_RATE);
         this.orderbooks.set(market_data.market_id, orderbook);
         this.positionUsersByMarket.set(market_data.market_id, new Set());
@@ -190,8 +214,17 @@ class Engine {
       );
     }
 
-    for (const market_id of marketIds) {
+    for (const market of markets) {
+      const { market_id } = market;
       if (!this.orderbooks.has(market_id)) {
+        // Risk changes are replayed from the engine stream. DB values are a
+        // projection and may be ahead of the snapshot cursor on recovery.
+        this.marketRiskConfigs.set(market_id, this.validateRiskConfig({
+          maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
+          liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
+          maxLeverage: null,
+          maxLiquidationQuantity: null,
+        }));
         this.orderbooks.set(
           market_id,
           new Orderbook(
@@ -199,7 +232,7 @@ class Engine {
               market_id,
               last_traded_price: "0",
               last_trade_id: "",
-              orders: []
+              orders: [],
             },
             this.MAKER_FEE_RATE
           )
@@ -216,14 +249,43 @@ class Engine {
 
   static async create(): Promise<Engine> {
     const { MarketRepo } = await import("db/repositories/market.repo");
-    const marketIds = (await MarketRepo.listMarkets()).map(
-      (market) => market.market_id
-    );
-    return new Engine(marketIds);
+    const markets = await MarketRepo.listMarkets();
+    return new Engine(markets);
+  }
+
+  private validateRiskConfig(config: MarketRiskConfig): MarketRiskConfig {
+    if (config.maintenanceMarginRate < 0n || config.liquidationFeeRate < 0n ||
+      config.maintenanceMarginRate + config.liquidationFeeRate >= SCALE ||
+      (config.maxLeverage !== null && config.maxLeverage <= 0n) ||
+      (config.maxLiquidationQuantity !== null && config.maxLiquidationQuantity <= 0n)) {
+      throw new Error("Invalid market risk configuration");
+    }
+    return config;
+  }
+
+  private riskConfig(market_id: string): MarketRiskConfig {
+    return this.marketRiskConfigs?.get(market_id) ?? {
+      maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
+      liquidationFeeRate: this.LIQUIDATION_FEE_RATE ?? 0n,
+      maxLeverage: null,
+      maxLiquidationQuantity: null,
+    };
   }
 
   getLastAppliedStreamId(): string {
     return this.lastAppliedStreamId;
+  }
+
+  hasActiveLiquidations(): boolean {
+    for (const users of this.positionUsersByMarket.values()) {
+      for (const userId of users) {
+        const positions = this.accounts.get(userId)?.positions;
+        if ([...(positions?.values() ?? [])].some(
+          (position) => position.state === PositionState.LIQUIDATING
+        )) return true;
+      }
+    }
+    return false;
   }
 
   recordAppliedStreamId(streamId: string): void {
@@ -236,7 +298,7 @@ class Engine {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
-        version: 4,
+        version: 6,
         snapshot_time: Date.now(),
         scale: Number(SCALE),
         last_applied_stream_id: this.lastAppliedStreamId,
@@ -254,12 +316,13 @@ class Engine {
               price: String(price),
               producer_id: metadata.producer_id,
               source_timestamp: metadata.source_timestamp,
-              sequence: String(metadata.sequence)
+              sequence: String(metadata.sequence),
             };
           }
         ),
         insurance_fund: this.insuranceFund.snapshot(),
-        trading_fee_account: this.tradingFeeAccount.snapshot()
+        trading_fee_account: this.tradingFeeAccount.snapshot(),
+        halted_markets: [...this.haltedMarkets],
       };
 
       this.orderbooks.forEach((orderbook, market_id) => {
@@ -270,7 +333,16 @@ class Engine {
           market_id,
           last_traded_price: String(last_traded_price),
           last_trade_id: String(last_trade_id),
-          orders: orderbook.snapshotOrderbook()
+          orders: orderbook.snapshotOrderbook(),
+          risk_config: (() => {
+            const risk = this.riskConfig(market_id);
+            return {
+              maintenance_margin_rate: String(risk.maintenanceMarginRate),
+              liquidation_fee_rate: String(risk.liquidationFeeRate),
+              max_leverage: risk.maxLeverage === null ? null : String(risk.maxLeverage),
+              max_liquidation_quantity: risk.maxLiquidationQuantity === null ? null : String(risk.maxLiquidationQuantity),
+            };
+          })(),
         };
 
         snapshot.markets.push(market_data);
@@ -308,6 +380,16 @@ class Engine {
           return this.getPosition(request);
         case "MARK_PRICE_UPDATE":
           return this.markPriceUpdate(request);
+        case "RETRY_LIQUIDATIONS":
+          for (const marketId of this.orderbooks.keys()) {
+            const metadata = this.markPriceMetadata.get(marketId);
+            if (!metadata || (this.replayTimestamp ?? Date.now()) -
+              metadata.source_timestamp > this.MAX_MARK_PRICE_AGE_MS) continue;
+            this.retryActiveLiquidations(marketId);
+          }
+          return engine_response("Liquidation retries processed", 1);
+        case "SET_MARKET_RISK":
+          return this.setMarketRisk(request);
         case "GET_FUNDING_RATE":
           return engine_response("Updating soon", 0);
         default:
@@ -327,6 +409,9 @@ class Engine {
     replayTimestamp?: number,
     sourceMessageId?: string
   ): EngineCommandResult {
+    this.haltedMarkets ??= new Set();
+    this.liquidationQueue ??= new Map();
+    this.processingLiquidations ??= false;
     const sourceTimestamp = sourceMessageId
       ? Number(sourceMessageId.split("-")[0])
       : undefined;
@@ -340,7 +425,7 @@ class Engine {
       changedBooks: new Set<string>(),
       changedTickers: new Set<string>(),
       candles: new Map<string, CandleDraft>(),
-      timestampMs
+      timestampMs,
     };
     this.commandEvents = events;
     this.currentSourceMessageId = sourceMessageId ?? randomUUID();
@@ -352,7 +437,7 @@ class Engine {
         if (!orderbook) continue;
         this.emitWsEvent({
           event_type: "BOOK",
-          data: { market_id, ...orderbook.getDepth() }
+          data: { market_id, ...orderbook.getDepth() },
         });
       }
       for (const market_id of events.changedTickers) {
@@ -366,14 +451,15 @@ class Engine {
           data: {
             market_id,
             ...(mark_price !== undefined && {
-              mark_price: formatFixed(mark_price)
+              mark_price: formatFixed(mark_price),
             }),
             ...(last_trade_id && {
               last_trade_id,
-              last_traded_price: formatFixed(last_traded_price)
+              last_traded_price: formatFixed(last_traded_price),
             }),
-            ...orderbook.getBestPrices()
-          }
+            ...(this.haltedMarkets.has(market_id) && { trading_halted: true }),
+            ...orderbook.getBestPrices(),
+          },
         });
       }
       if (events.candles.size) {
@@ -414,9 +500,12 @@ class Engine {
                   ),
                   trading_fee_account: events.db.flatMap(
                     (event) => event.changes.trading_fee_account ?? []
-                  )
-                }
-              }
+                  ),
+                  liquidation_attempts: events.db.flatMap(
+                    (event) => event.changes.liquidation_attempts ?? []
+                  ),
+                },
+              },
             ]
           : events.db;
       this.awaitingEventPublication =
@@ -470,7 +559,7 @@ class Engine {
             close: fill.price,
             base_volume: fill.filled,
             quote_volume: quoteVolume,
-            trade_count: 1
+            trade_count: 1,
           });
         }
       }
@@ -481,8 +570,8 @@ class Engine {
           trade_id: fill.trade_id,
           price: formatFixed(fill.price),
           quantity: formatFixed(fill.filled),
-          taker_side
-        }
+          taker_side,
+        },
       });
     }
   }
@@ -501,14 +590,14 @@ class Engine {
           {
             user_id: request.user_id,
             available: account.collateral.available.toString(),
-            reserved: account.collateral.reserved.toString()
-          }
+            reserved: account.collateral.reserved.toString(),
+          },
         ],
         orders: [],
         fills: [],
         positions: [],
-        market_data: []
-      }
+        market_data: [],
+      },
     });
     return engine_response("Onramp successfull", 1);
   }
@@ -518,13 +607,13 @@ class Engine {
     if (!account) {
       return engine_response("Balance Retrieved", 1, {
         available: "0",
-        reserved: "0"
+        reserved: "0",
       });
     }
 
     return engine_response("Balance Retrieved", 1, {
       available: formatFixed(account.collateral.available),
-      reserved: formatFixed(account.collateral.reserved)
+      reserved: formatFixed(account.collateral.reserved),
     });
   }
 
@@ -544,6 +633,39 @@ class Engine {
         order_margin_consumed - position_margin_added
       );
     }
+  }
+
+  private setMarketRisk(request: CommandOf<"SET_MARKET_RISK">): EngineResponse {
+    if (!this.orderbooks.has(request.market_id)) {
+      throw new Error("Incorrect Market ID");
+    }
+    const config = this.validateRiskConfig({
+      maintenanceMarginRate: request.maintenance_margin_rate,
+      liquidationFeeRate: request.liquidation_fee_rate,
+      maxLeverage: request.max_leverage,
+      maxLiquidationQuantity: request.max_liquidation_quantity,
+    });
+    this.marketRiskConfigs ??= new Map();
+    this.marketRiskConfigs.set(request.market_id, config);
+    this.emitDbEvent({
+      event_type: "MARKET_RISK_UPDATE",
+      changes: { market_data: [{
+        market_id: request.market_id,
+        maintenance_margin_rate: config.maintenanceMarginRate,
+        liquidation_fee_rate: config.liquidationFeeRate,
+        max_leverage: config.maxLeverage,
+        max_liquidation_quantity: config.maxLiquidationQuantity,
+      }] },
+    });
+    // A stricter maintenance setting can make existing positions liquidatable.
+    const markMetadata = this.markPriceMetadata.get(request.market_id);
+    if (markMetadata && this.markPrices.has(request.market_id) &&
+      (this.replayTimestamp ?? Date.now()) - markMetadata.source_timestamp <= this.MAX_MARK_PRICE_AGE_MS) {
+      for (const user_id of this.positionUsersByMarket.get(request.market_id) ?? []) {
+        this.liquidationCheck({ user_id, market_id: request.market_id });
+      }
+    }
+    return engine_response("Market risk configuration updated", 1);
   }
 
   private requireFreshMarkPrice(market_id: string) {
@@ -580,10 +702,21 @@ class Engine {
       if (!orderbook) {
         throw new Error("Incorrect Market ID");
       }
+      if (this.haltedMarkets.has(market_id)) {
+        throw new Error("Trading is halted for this market");
+      }
+      const riskConfig = this.riskConfig(market_id);
+      if (riskConfig.maxLeverage !== null && leverage > riskConfig.maxLeverage) {
+        throw new Error("Leverage exceeds this market's limit");
+      }
 
       const account = this.accounts.get(user_id);
       if (!account) {
         return engine_response("User Account does not exist", 0);
+      }
+      const existingPosition = account.positions.get(market_id);
+      if (existingPosition && existingPosition.state !== PositionState.HEALTHY) {
+        throw new Error("Position is under liquidation");
       }
 
       if (order.filled < 0n || order.filled >= quantity) {
@@ -603,7 +736,7 @@ class Engine {
         price,
         quantity,
         leverage,
-        ...order
+        ...order,
       });
       const preview_filled = preview_fills.reduce(
         (total, fill) => total + fill.quantity,
@@ -670,7 +803,7 @@ class Engine {
         price,
         quantity,
         leverage,
-        ...order
+        ...order,
       });
       if (result.fills.length !== preview_fills.length) {
         throw new Error("Order book changed between fee preview and execution");
@@ -725,7 +858,7 @@ class Engine {
               market_id,
               user_id: fill.taker_user_id,
               role: "TAKER",
-              amount: fill.taker_fee
+              amount: fill.taker_fee,
             },
             {
               trade_id: fill.trade_id,
@@ -733,7 +866,7 @@ class Engine {
               market_id,
               user_id: fill.maker_user_id,
               role: "MAKER",
-              amount: fill.maker_order_fee_consumed
+              amount: fill.maker_order_fee_consumed,
             }
           );
           //========Update Positions===========
@@ -761,7 +894,9 @@ class Engine {
               reserved_margin: 0n,
               unrealized_pnl: 0n,
               avg_entry_price: 0n,
-              funding_accrued: 0n
+              funding_accrued: 0n,
+              state: PositionState.HEALTHY,
+              liquidation_attempts: 0,
             };
             taker_acc?.positions.set(market_id, taker_position);
             this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
@@ -820,7 +955,9 @@ class Engine {
                   reserved_margin: 0n,
                   unrealized_pnl: 0n,
                   avg_entry_price: 0n,
-                  funding_accrued: 0n
+                  funding_accrued: 0n,
+                  state: PositionState.HEALTHY,
+                  liquidation_attempts: 0,
                 };
 
                 const margin_reserved = calculateInitialMargin(
@@ -901,7 +1038,9 @@ class Engine {
               reserved_margin: 0n,
               unrealized_pnl: 0n,
               avg_entry_price: 0n,
-              funding_accrued: 0n
+              funding_accrued: 0n,
+              state: PositionState.HEALTHY,
+              liquidation_attempts: 0,
             };
             maker_acc?.positions.set(market_id, maker_position);
             this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
@@ -964,7 +1103,9 @@ class Engine {
                   reserved_margin: 0n,
                   unrealized_pnl: 0n,
                   avg_entry_price: 0n,
-                  funding_accrued: 0n
+                  funding_accrued: 0n,
+                  state: PositionState.HEALTHY,
+                  liquidation_attempts: 0,
                 };
 
                 const margin_reserved = calculateInitialMargin(
@@ -1068,8 +1209,8 @@ class Engine {
                   this.MAKER_FEE_RATE ?? 0n
                 )
               : 0n,
-          slippage: 0n
-        }
+          slippage: 0n,
+        },
       ];
 
       const cancellation_events =
@@ -1081,7 +1222,7 @@ class Engine {
         ...result.fills.map((fill) => fill.maker_user_id),
         ...cancellation_events.flatMap((event) =>
           (event.changes.balances ?? []).map((balance) => balance.user_id)
-        )
+        ),
       ]);
       const balance_db_update: NonNullable<
         DBEventInput["changes"]["balances"]
@@ -1098,7 +1239,7 @@ class Engine {
         balance_db_update.push({
           user_id: affected_user_id,
           available: affected_account.collateral.available,
-          reserved: affected_account.collateral.reserved
+          reserved: affected_account.collateral.reserved,
         });
 
         if (result.fills.length > 0) {
@@ -1113,9 +1254,12 @@ class Engine {
                   reserved_margin: position.reserved_margin,
                   avg_entry_price: position.avg_entry_price,
                   unrealized_pnl: position.unrealized_pnl,
-                  funding_accrued: position.funding_accrued
+                  funding_accrued: position.funding_accrued,
+                  state: position.state,
+                  liquidation_id: position.liquidation_id,
+                  liquidation_attempts: position.liquidation_attempts,
                 }
-              : null
+              : null,
           });
         }
       }
@@ -1137,7 +1281,7 @@ class Engine {
           maker_order_fee_remaining:
             fill_item.maker_order_fee_remaining.toString(),
           taker_fee: fill_item.taker_fee.toString(),
-          maker_order_status: fill_item.maker_order_status
+          maker_order_status: fill_item.maker_order_status,
         }));
 
       const response = {
@@ -1154,7 +1298,7 @@ class Engine {
                   this.MAKER_FEE_RATE ?? 0n
                 )
               : 0n
-          )
+          ),
         },
         fills: result.fills.map((fill_item: Fill) => {
           const {
@@ -1173,9 +1317,9 @@ class Engine {
             price: formatFixed(price),
             filled: formatFixed(filled),
             maker_fee: formatFixed(maker_order_fee_consumed),
-            taker_fee: formatFixed(taker_fee)
+            taker_fee: formatFixed(taker_fee),
           };
-        })
+        }),
       };
 
       this.emitDbEvent({
@@ -1189,9 +1333,10 @@ class Engine {
             result.fills.length > 0
               ? [{ market_id, ...orderbook.fetchMarketData() }]
               : [],
-          trading_fee_account: trading_fee_change
-        }
+          trading_fee_account: trading_fee_change,
+        },
       });
+      this.retryActiveLiquidations(market_id);
 
       return engine_response("Order placed successfully", 1, response);
     } catch (error) {
@@ -1237,8 +1382,8 @@ class Engine {
           {
             user_id: request.user_id,
             available: account.collateral.available,
-            reserved: account.collateral.reserved
-          }
+            reserved: account.collateral.reserved,
+          },
         ],
         orders: [],
         order_updates: [
@@ -1248,20 +1393,20 @@ class Engine {
             market_id: request.market_id,
             status: OrderStatus.CANCELLED,
             remaining_order_margin: 0n,
-            remaining_order_fee: 0n
-          }
+            remaining_order_fee: 0n,
+          },
         ],
         fills: [],
         positions: [],
-        market_data: []
-      }
+        market_data: [],
+      },
     });
 
     return engine_response("Order cancelled successfully", 1, {
       order_id,
       rem_qty: formatFixed(rem_qty),
       price: formatFixed(price),
-      released_fee: formatFixed(remaining_order_fee)
+      released_fee: formatFixed(remaining_order_fee),
     });
   }
 
@@ -1294,19 +1439,84 @@ class Engine {
       reserved_margin: formatFixed(position.reserved_margin),
       avg_entry_price: formatFixed(position.avg_entry_price),
       unrealized_pnl: formatFixed(position.unrealized_pnl),
-      funding_accrued: formatFixed(position.funding_accrued)
+      funding_accrued: formatFixed(position.funding_accrued),
+      state: position.state,
+      liquidation_id: position.liquidation_id,
     };
+    const markPrice = this.markPrices.get(request.market_id);
+    if (markPrice !== undefined) {
+      const riskConfig = this.riskConfig(request.market_id);
+      const risk = calculatePositionRisk(
+        position,
+        markPrice,
+        riskConfig.maintenanceMarginRate,
+        riskConfig.liquidationFeeRate,
+      );
+      Object.assign(response, {
+        mark_price: formatFixed(markPrice),
+        equity: formatFixed(risk.equity),
+        maintenance_margin: formatFixed(risk.maintenanceMargin),
+        estimated_liquidation_fee: formatFixed(risk.estimatedCloseFee),
+        liquidation_price: (() => {
+          const price = calculateLiquidationPrice(position, riskConfig.maintenanceMarginRate, riskConfig.liquidationFeeRate);
+          return price === null ? null : formatFixed(price);
+        })(),
+      });
+    }
 
     return engine_response("Position fetched successfully", 1, { ...response });
   }
 
   private liquidationCheck({
     user_id,
-    market_id
+    market_id,
   }: {
     user_id: string;
     market_id: string;
   }) {
+    this.liquidationQueue.set(`${user_id}:${market_id}`, { user_id, market_id });
+    this.drainLiquidationQueue();
+  }
+
+  private retryActiveLiquidations(market_id: string): void {
+    if (this.haltedMarkets.has(market_id)) return;
+    for (const user_id of this.positionUsersByMarket.get(market_id) ?? []) {
+      const position = this.accounts.get(user_id)?.positions.get(market_id);
+      if (position?.state === PositionState.LIQUIDATING) {
+        this.liquidationQueue.set(`${user_id}:${market_id}`, { user_id, market_id });
+      }
+    }
+    this.drainLiquidationQueue();
+  }
+
+  private drainLiquidationQueue(): void {
+    if (this.processingLiquidations) return;
+    this.processingLiquidations = true;
+    const processed = new Set<string>();
+    try {
+      while (this.liquidationQueue.size > 0) {
+        const [key, next] = this.liquidationQueue.entries().next().value!;
+        this.liquidationQueue.delete(key);
+        if (processed.has(key)) continue;
+        processed.add(key);
+        if (processed.size > 10000) {
+          throw new Error("Liquidation cascade exceeds safety limit");
+        }
+        this.processLiquidation(next);
+      }
+    } finally {
+      this.processingLiquidations = false;
+    }
+  }
+
+  private processLiquidation({
+    user_id,
+    market_id,
+  }: {
+    user_id: string;
+    market_id: string;
+  }) {
+    if (this.haltedMarkets.has(market_id)) return;
     const account = this.accounts.get(user_id);
     const position = account?.positions.get(market_id);
     if (!account || !position) return;
@@ -1316,24 +1526,29 @@ class Engine {
     }
 
     const mark_price = this.requireFreshMarkPrice(market_id);
-    position.unrealized_pnl = calcUnrealisedPnL(
-      position.type,
+    const riskConfig = this.riskConfig(market_id);
+    const risk = calculatePositionRisk(
+      position,
       mark_price,
-      position.avg_entry_price,
-      position.quantity
+      riskConfig.maintenanceMarginRate,
+      riskConfig.liquidationFeeRate,
     );
+    position.unrealized_pnl = risk.unrealizedPnl;
 
-    const position_equity = position.reserved_margin + position.unrealized_pnl;
-    const maintenance_margin_rate = this.MAINTENANCE_MARGIN_RATE;
-
-    const mark_notional = calculateNotional(mark_price, position.quantity);
-    const maintenance_requirement =
-      calculateMaintenanceMargin(mark_notional, maintenance_margin_rate) +
-      calculateFee(mark_notional, this.LIQUIDATION_FEE_RATE ?? 0n);
-
-    if (position_equity <= maintenance_requirement) {
+    if (risk.liquidatable || position.state === PositionState.LIQUIDATING) {
+      position.state = PositionState.LIQUIDATING;
+      position.liquidation_id ??= generate_liquidation_order_id(
+        this.currentSourceMessageId ?? randomUUID(),
+        user_id,
+        market_id,
+        0,
+      );
+      position.liquidation_attempts += 1;
       //trigger liquidity
-      const liquidation_quantity = position.quantity;
+      const initial_position_quantity = position.quantity;
+      const liquidation_quantity = riskConfig.maxLiquidationQuantity !== null &&
+        riskConfig.maxLiquidationQuantity < position.quantity
+        ? riskConfig.maxLiquidationQuantity : position.quantity;
 
       // Cancel only resting orders in the liquidated market. Isolated margin
       // and orders in other markets must remain available to the user.
@@ -1344,7 +1559,7 @@ class Engine {
           action: "CANCEL_ORDER",
           user_id,
           order_id: open_order_id,
-          market_id
+          market_id,
         });
       }
 
@@ -1372,7 +1587,13 @@ class Engine {
       const liquidation_risks = new Set<string>();
       let remaining_liquidation_quantity = position.quantity;
       let remaining_position_margin = position.reserved_margin;
+      let remaining_funding = position.funding_accrued;
       let consumed_position_margin = 0n;
+      let total_realized_pnl = 0n;
+      let total_liquidation_fee = 0n;
+      let total_user_refund = 0n;
+      let total_shortfall_covered = 0n;
+      let total_uncovered_shortfall = 0n;
       const fund_settlement_inputs: Array<{
         entry_id_prefix: string;
         market_id: string;
@@ -1387,34 +1608,29 @@ class Engine {
         TradingFeeAccount["collect"]
       >[0] = [];
       response?.fills.forEach((fill: Fill) => {
-        const allocated_margin =
-          fill.filled === remaining_liquidation_quantity
-            ? remaining_position_margin
-            : divideRounded(
-                remaining_position_margin * fill.filled,
-                remaining_liquidation_quantity,
-                "floor"
-              );
-        const realized_pnl = calcUnrealisedPnL(
-          position.type,
+        const economics = calculateLiquidationFill(
+          {
+            ...position,
+            quantity: remaining_liquidation_quantity,
+            reserved_margin: remaining_position_margin,
+            funding_accrued: remaining_funding,
+          },
+          fill.filled,
           fill.price,
-          position.avg_entry_price,
-          fill.filled
+          riskConfig.liquidationFeeRate,
         );
-        const requested_liquidation_fee = calculateFee(
-          calculateNotional(fill.price, fill.filled),
-          this.LIQUIDATION_FEE_RATE
-        );
+        total_realized_pnl += economics.realizedPnl;
         fund_settlement_inputs.push({
           entry_id_prefix: `${order_id}:${fill.trade_id}`,
           market_id,
           user_id,
           liquidation_order_id: order_id,
-          execution_equity: allocated_margin + realized_pnl,
-          requested_liquidation_fee
+          execution_equity: economics.executionEquity,
+          requested_liquidation_fee: economics.requestedFee,
         });
-        consumed_position_margin += allocated_margin;
-        remaining_position_margin -= allocated_margin;
+        consumed_position_margin += economics.allocatedMargin;
+        remaining_position_margin -= economics.allocatedMargin;
+        remaining_funding -= economics.allocatedFunding;
         remaining_liquidation_quantity -= fill.filled;
 
         //handle maker position
@@ -1433,7 +1649,7 @@ class Engine {
           market_id,
           user_id: fill.maker_user_id,
           role: "MAKER",
-          amount: fill.maker_order_fee_consumed
+          amount: fill.maker_order_fee_consumed,
         });
         let maker_position = maker_acc.positions.get(market_id);
 
@@ -1450,7 +1666,9 @@ class Engine {
             reserved_margin: 0n,
             unrealized_pnl: 0n,
             avg_entry_price: 0n,
-            funding_accrued: 0n
+            funding_accrued: 0n,
+            state: PositionState.HEALTHY,
+            liquidation_attempts: 0,
           };
           maker_acc?.positions.set(market_id, maker_position);
           this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
@@ -1509,7 +1727,9 @@ class Engine {
                 reserved_margin: 0n,
                 unrealized_pnl: 0n,
                 avg_entry_price: 0n,
-                funding_accrued: 0n
+                funding_accrued: 0n,
+                state: PositionState.HEALTHY,
+                liquidation_attempts: 0,
               };
 
               const margin_reserved = calculateInitialMargin(
@@ -1566,6 +1786,10 @@ class Engine {
         if (fund_settlement.user_refund > 0n) {
           this.accounts.credit(user_id, fund_settlement.user_refund);
         }
+        total_liquidation_fee += fund_settlement.liquidation_fee;
+        total_user_refund += fund_settlement.user_refund;
+        total_shortfall_covered += fund_settlement.shortfall_covered;
+        total_uncovered_shortfall += fund_settlement.uncovered_shortfall;
         insurance_fund_changes.push({
           collateral_asset: fund_settlement.collateral_asset,
           balance: fund_settlement.balance,
@@ -1573,7 +1797,7 @@ class Engine {
           total_liquidation_surplus: fund_settlement.total_liquidation_surplus,
           total_shortfall_covered: fund_settlement.total_shortfall_covered,
           total_uncovered_shortfall: fund_settlement.total_uncovered_shortfall,
-          entries: fund_settlement.entries
+          entries: fund_settlement.entries,
         });
       }
       const trading_fee_changes = liquidation_fee_charges.length
@@ -1585,9 +1809,14 @@ class Engine {
       // insurance fund receives that fee and covers negative execution equity.
       this.accounts.debitMargin(user_id, consumed_position_margin);
       position.reserved_margin = remaining_position_margin;
+      position.funding_accrued = remaining_funding;
       position.quantity = remaining_liquidation_quantity;
+      if (total_uncovered_shortfall > 0n) {
+        position.state = PositionState.BANKRUPT;
+        this.haltedMarkets.add(market_id);
+      }
 
-      if (response.rem_qty != 0n) {
+      if (remaining_liquidation_quantity !== 0n) {
         position.unrealized_pnl = calcUnrealisedPnL(
           position.type,
           mark_price,
@@ -1623,7 +1852,7 @@ class Engine {
                 status:
                   response.rem_qty === 0n
                     ? OrderStatus.FILLED
-                    : OrderStatus.PARTIALLY_FILLED,
+                    : OrderStatus.CANCELLED,
                 price: mark_price,
                 quantity: liquidation_quantity,
                 filled: response.filled,
@@ -1633,8 +1862,8 @@ class Engine {
                 initial_fee: 0n,
                 remaining_order_margin: 0n,
                 remaining_order_fee: 0n,
-                slippage: 0n
-              }
+                slippage: 0n,
+              },
             ]
           : [];
       const db_update_fills = response.fills.map((fill) => ({
@@ -1650,7 +1879,7 @@ class Engine {
         maker_order_fee_consumed: fill.maker_order_fee_consumed,
         maker_order_fee_remaining: fill.maker_order_fee_remaining,
         taker_fee: 0n,
-        maker_order_status: fill.maker_order_status
+        maker_order_status: fill.maker_order_status,
       }));
       const db_update_positions = affected_accounts.map((account) => {
         const current_position = account.positions.get(market_id);
@@ -1664,9 +1893,12 @@ class Engine {
                 reserved_margin: current_position.reserved_margin,
                 avg_entry_price: current_position.avg_entry_price,
                 unrealized_pnl: current_position.unrealized_pnl,
-                funding_accrued: current_position.funding_accrued
+                funding_accrued: current_position.funding_accrued,
+                state: current_position.state,
+                liquidation_id: current_position.liquidation_id,
+                liquidation_attempts: current_position.liquidation_attempts,
               }
-            : null
+            : null,
         };
       });
 
@@ -1676,7 +1908,7 @@ class Engine {
           balances: affected_accounts.map((account) => ({
             user_id: account.user_id,
             available: account.collateral.available,
-            reserved: account.collateral.reserved
+            reserved: account.collateral.reserved,
           })),
           orders: db_update_order,
           fills: db_update_fills,
@@ -1685,12 +1917,34 @@ class Engine {
             {
               market_id,
               mark_price,
-              ...(response.fills.length > 0 ? orderbook.fetchMarketData() : {})
-            }
+              ...(total_uncovered_shortfall > 0n && { trading_halted: true }),
+              ...(response.fills.length > 0 ? orderbook.fetchMarketData() : {}),
+            },
           ],
           insurance_fund: insurance_fund_changes,
-          trading_fee_account: trading_fee_changes
-        }
+          trading_fee_account: trading_fee_changes,
+          liquidation_attempts: [{
+            attempt_id: order_id,
+            liquidation_id: position.liquidation_id!,
+            user_id,
+            market_id,
+            status: total_uncovered_shortfall > 0n
+              ? "BANKRUPT"
+              : remaining_liquidation_quantity === 0n
+                ? "COMPLETED"
+                : "LIQUIDATING",
+            attempt: position.liquidation_attempts,
+            initial_quantity: initial_position_quantity,
+            filled_quantity: response.filled,
+            remaining_quantity: remaining_liquidation_quantity,
+            mark_price,
+            realized_pnl: total_realized_pnl,
+            liquidation_fee: total_liquidation_fee,
+            user_refund: total_user_refund,
+            shortfall_covered: total_shortfall_covered,
+            uncovered_shortfall: total_uncovered_shortfall,
+          }],
+        },
       });
 
       for (const affected_user_id of liquidation_risks) {
@@ -1734,19 +1988,19 @@ class Engine {
     this.markPriceMetadata.set(market_id, {
       producer_id,
       source_timestamp,
-      sequence: parsed_sequence
+      sequence: parsed_sequence,
     });
     this.commandEvents?.changedTickers.add(market_id);
     this.emitDbEvent({
       event_type: "MARK_PRICE_UPDATE",
-      changes: { market_data: [{ market_id, mark_price }] }
+      changes: { market_data: [{ market_id, mark_price }] },
     });
 
     const users_with_position = this.positionUsersByMarket.get(market_id);
 
     if (!users_with_position?.size) {
       return engine_response("No positions to recalibrate", 1, {
-        response: "res"
+        response: "res",
       });
     }
 

@@ -4,6 +4,7 @@ import type {
   SnapshotPosition,
   UserAccount,
 } from "./types";
+import { PositionState } from "./types";
 
 class AccountStore {
   private accounts = new Map<string, UserAccount>();
@@ -20,6 +21,9 @@ class AccountStore {
             avg_entry_price: BigInt(position.avg_entry_price),
             unrealized_pnl: BigInt(position.unrealized_pnl),
             funding_accrued: BigInt(position.funding_accrued),
+            state: position.state ?? PositionState.HEALTHY,
+            liquidation_id: position.liquidation_id,
+            liquidation_attempts: position.liquidation_attempts ?? 0,
           };
           return [position.market_id, position_data];
         })
@@ -73,6 +77,9 @@ class AccountStore {
             avg_entry_price: String(position.avg_entry_price),
             unrealized_pnl: String(position.unrealized_pnl),
             funding_accrued: String(position.funding_accrued),
+            state: position.state,
+            liquidation_id: position.liquidation_id,
+            liquidation_attempts: position.liquidation_attempts,
           };
           return position_data;
         }),

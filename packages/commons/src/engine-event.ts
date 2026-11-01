@@ -65,7 +65,10 @@ const PositionSchema = z.object({
   reserved_margin: ScaledIntegerSchema,
   avg_entry_price: ScaledIntegerSchema,
   unrealized_pnl: ScaledIntegerSchema,
-  funding_accrued: ScaledIntegerSchema
+  funding_accrued: ScaledIntegerSchema,
+  state: z.enum(["HEALTHY", "LIQUIDATING", "BANKRUPT"]).default("HEALTHY"),
+  liquidation_id: IdSchema.optional(),
+  liquidation_attempts: z.number().int().nonnegative().default(0)
 });
 
 const PositionChangeSchema = z.object({
@@ -83,7 +86,30 @@ const MarketDataChangeSchema = z.object({
   market_id: IdSchema,
   mark_price: ScaledIntegerSchema.optional(),
   last_traded_price: ScaledIntegerSchema.optional(),
-  last_trade_id: IdSchema.optional()
+  last_trade_id: IdSchema.optional(),
+  trading_halted: z.boolean().optional(),
+  maintenance_margin_rate: ScaledIntegerSchema.optional(),
+  liquidation_fee_rate: ScaledIntegerSchema.optional(),
+  max_leverage: ScaledIntegerSchema.nullable().optional(),
+  max_liquidation_quantity: ScaledIntegerSchema.nullable().optional()
+});
+
+const LiquidationAttemptChangeSchema = z.object({
+  attempt_id: IdSchema,
+  liquidation_id: IdSchema,
+  user_id: IdSchema,
+  market_id: IdSchema,
+  status: z.enum(["LIQUIDATING", "COMPLETED", "BANKRUPT"]),
+  attempt: z.number().int().positive(),
+  initial_quantity: ScaledIntegerSchema,
+  filled_quantity: ScaledIntegerSchema,
+  remaining_quantity: ScaledIntegerSchema,
+  mark_price: ScaledIntegerSchema,
+  realized_pnl: ScaledIntegerSchema,
+  liquidation_fee: ScaledIntegerSchema,
+  user_refund: ScaledIntegerSchema,
+  shortfall_covered: ScaledIntegerSchema,
+  uncovered_shortfall: ScaledIntegerSchema
 });
 
 const CandleChangeSchema = z.object({
@@ -155,6 +181,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     "PLACE_ORDER",
     "CANCEL_ORDER",
     "LIQUIDATION",
+    "MARKET_RISK_UPDATE",
     "MARK_PRICE_UPDATE",
     "FUNDING_SETTLEMENT"
   ]),
@@ -167,7 +194,8 @@ export const DBEventSchema = EventMetadataSchema.extend({
     market_data: z.array(MarketDataChangeSchema).default([]),
     candles: z.array(CandleChangeSchema).default([]),
     insurance_fund: z.array(InsuranceFundChangeSchema).default([]),
-    trading_fee_account: z.array(TradingFeeAccountChangeSchema).default([])
+    trading_fee_account: z.array(TradingFeeAccountChangeSchema).default([]),
+    liquidation_attempts: z.array(LiquidationAttemptChangeSchema).default([])
   })
 });
 
@@ -203,7 +231,8 @@ const TickerEventSchema = WSMetadataSchema.extend({
     last_traded_price: DecimalSchema.optional(),
     last_trade_id: IdSchema.optional(),
     best_bid: DecimalSchema.optional(),
-    best_ask: DecimalSchema.optional()
+    best_ask: DecimalSchema.optional(),
+    trading_halted: z.boolean().optional()
   })
 });
 
@@ -257,7 +286,9 @@ const PrivatePositionSchema = z.object({
   reserved_margin: DecimalSchema,
   avg_entry_price: DecimalSchema,
   unrealized_pnl: DecimalSchema,
-  funding_accrued: DecimalSchema
+  funding_accrued: DecimalSchema,
+  state: z.enum(["HEALTHY", "LIQUIDATING", "BANKRUPT"]).default("HEALTHY"),
+  liquidation_id: IdSchema.optional()
 });
 
 export const PrivateAccountEventSchema = EventMetadataSchema.extend({

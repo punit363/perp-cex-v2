@@ -4,6 +4,7 @@ import {
   OrderType,
   PositionType
 } from "commons/src/order.type";
+import { PositionState } from "../types";
 import { parseFixed, SCALE } from "../math/fixed-point";
 import z from "zod";
 
@@ -61,7 +62,7 @@ const SnapshotTradingFeeAccountSchema = z.object({
 
 const EngineSnapshotSchema = z
   .object({
-    version: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
     snapshot_time: z.number().int().nonnegative(),
     scale: z.literal(Number(SCALE)),
     last_applied_stream_id: z.string().regex(/^\d+-\d+$/),
@@ -70,7 +71,13 @@ const EngineSnapshotSchema = z
         market_id: z.string().min(1),
         last_traded_price: SnapshotInteger,
         last_trade_id: z.string(),
-        orders: z.array(SnapshotOrderSchema)
+        orders: z.array(SnapshotOrderSchema),
+        risk_config: z.object({
+          maintenance_margin_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
+          liquidation_fee_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
+          max_leverage: SnapshotInteger.refine(isPositiveSnapshotInteger).nullable(),
+          max_liquidation_quantity: SnapshotInteger.refine(isPositiveSnapshotInteger).nullable()
+        }).optional()
       })
     ),
     accounts: z.array(
@@ -88,7 +95,10 @@ const EngineSnapshotSchema = z
             reserved_margin: SnapshotInteger,
             avg_entry_price: SnapshotInteger,
             unrealized_pnl: SnapshotInteger,
-            funding_accrued: SnapshotInteger
+            funding_accrued: SnapshotInteger,
+            state: z.enum(PositionState).optional(),
+            liquidation_id: z.string().min(1).optional(),
+            liquidation_attempts: z.number().int().nonnegative().optional()
           })
         )
       })
@@ -103,21 +113,29 @@ const EngineSnapshotSchema = z
       })
     ),
     insurance_fund: SnapshotInsuranceFundSchema.optional(),
-    trading_fee_account: SnapshotTradingFeeAccountSchema.optional()
+    trading_fee_account: SnapshotTradingFeeAccountSchema.optional(),
+    halted_markets: z.array(z.string().min(1)).optional()
   })
   .superRefine((snapshot, context) => {
-    if (snapshot.version === 3 && !snapshot.insurance_fund) {
+    if (snapshot.version >= 3 && !snapshot.insurance_fund) {
       context.addIssue({
         code: "custom",
         path: ["insurance_fund"],
-        message: "Version 3 snapshot requires insurance fund state"
+        message: "Snapshot requires insurance fund state"
       });
     }
-    if (snapshot.version === 4 && !snapshot.trading_fee_account) {
+    if (snapshot.version >= 4 && !snapshot.trading_fee_account) {
       context.addIssue({
         code: "custom",
         path: ["trading_fee_account"],
-        message: "Version 4 snapshot requires trading fee account state"
+        message: "Snapshot requires trading fee account state"
+      });
+    }
+    if (snapshot.version >= 5 && !snapshot.halted_markets) {
+      context.addIssue({
+        code: "custom",
+        path: ["halted_markets"],
+        message: "Snapshot requires halted markets"
       });
     }
     const accountIds = new Set<string>();
@@ -132,6 +150,14 @@ const EngineSnapshotSchema = z
       accountIds.add(account.user_id);
       const positionMarkets = new Set<string>();
       account.positions.forEach((position, positionIndex) => {
+        if (snapshot.version >= 5 &&
+          (position.state === undefined || position.liquidation_attempts === undefined)) {
+          context.addIssue({
+            code: "custom",
+            path: ["accounts", index, "positions", positionIndex],
+            message: "Version 5 position requires liquidation state and attempt count"
+          });
+        }
         if (positionMarkets.has(position.market_id)) {
           context.addIssue({
             code: "custom",
@@ -146,6 +172,21 @@ const EngineSnapshotSchema = z
     const marketIds = new Set<string>();
     const orderIds = new Set<string>();
     snapshot.markets.forEach((market, marketIndex) => {
+      if (snapshot.version >= 6 && !market.risk_config) {
+        context.addIssue({
+          code: "custom",
+          path: ["markets", marketIndex, "risk_config"],
+          message: "Version 6 market requires risk configuration"
+        });
+      }
+      if (market.risk_config &&
+        BigInt(market.risk_config.maintenance_margin_rate) + BigInt(market.risk_config.liquidation_fee_rate) >= SCALE) {
+        context.addIssue({
+          code: "custom",
+          path: ["markets", marketIndex, "risk_config"],
+          message: "Market risk rates must sum to less than one"
+        });
+      }
       if (marketIds.has(market.market_id)) {
         context.addIssue({
           code: "custom",
@@ -200,6 +241,15 @@ const decimalToFixed = z.string().transform((value, context) => {
 });
 
 const RequestToEngineSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("RETRY_LIQUIDATIONS") }),
+  z.object({
+    action: z.literal("SET_MARKET_RISK"),
+    market_id: z.string().min(1),
+    maintenance_margin_rate: decimalToFixed,
+    liquidation_fee_rate: decimalToFixed,
+    max_leverage: decimalToFixed.nullable(),
+    max_liquidation_quantity: decimalToFixed.nullable()
+  }),
   z.object({
     action: z.literal("ONRAMP"),
     user_id: z.string().min(1),

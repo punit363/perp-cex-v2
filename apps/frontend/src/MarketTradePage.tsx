@@ -26,8 +26,25 @@ type Position = {
   avg_entry_price: string;
   unrealized_pnl: string;
   funding_accrued: string;
+  state: "HEALTHY" | "LIQUIDATING" | "BANKRUPT";
+  mark_price?: string;
+  equity?: string;
+  maintenance_margin?: string;
+  liquidation_price?: string | null;
 };
-type AccountTab = "open" | "history" | "positions";
+type Liquidation = {
+  liquidation_id: string;
+  status: "LIQUIDATING" | "COMPLETED" | "BANKRUPT";
+  total_filled: string;
+  remaining_quantity: string;
+  total_liquidation_fee: string;
+  total_user_refund: string;
+  total_shortfall_covered: string;
+  total_uncovered_shortfall: string;
+  attempts: number;
+  created_at: string;
+};
+type AccountTab = "open" | "history" | "positions" | "liquidations";
 type Envelope<T> = { status?: string; message?: string; data?: T };
 
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/;
@@ -76,7 +93,7 @@ function OrderBook({ depth, loading, error, current, trades, onChoosePrice, onRe
   </section>;
 }
 
-function OrderForm({ marketId, listed, token, currentPrice, selectedPrice, onSignIn, onPlaced }: { marketId: string; listed: boolean; token: string | null; currentPrice: string | null; selectedPrice: string | null; onSignIn: () => void; onPlaced: () => void }) {
+function OrderForm({ marketId, listed, halted, token, currentPrice, selectedPrice, onSignIn, onPlaced }: { marketId: string; listed: boolean; halted: boolean; token: string | null; currentPrice: string | null; selectedPrice: string | null; onSignIn: () => void; onPlaced: () => void }) {
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [type, setType] = useState<"LIMIT" | "MARKET">("LIMIT");
   const [price, setPrice] = useState("");
@@ -96,6 +113,7 @@ function OrderForm({ marketId, listed, token, currentPrice, selectedPrice, onSig
     setError("");
     setSuccess("");
     if (!listed) { setError("This preview pair is not listed for trading."); return; }
+    if (halted) { setError("Trading is halted for this market."); return; }
     if (!token) { onSignIn(); return; }
     if (!validPositive(quantity) || !validPositive(leverage)) { setError("Enter a positive quantity and leverage with up to 8 decimal places."); return; }
     const orderPrice = type === "LIMIT" ? price : side === "BUY" ? budget : "0";
@@ -132,8 +150,8 @@ function OrderForm({ marketId, listed, token, currentPrice, selectedPrice, onSig
       {type === "MARKET" && <p className="trade-order__hint">{side === "BUY" ? "The engine spends up to your maximum amount across available asks." : "The engine matches your quantity against available bids."}</p>}
       {error && <p className="trade-order__message is-error" role="alert">{error}</p>}
       {success && <p className="trade-order__message is-success" role="status">{success}</p>}
-      {!token ? <button type="button" className={`trade-order__submit ${side === "SELL" ? "is-sell" : ""}`} disabled={!listed} onClick={onSignIn}>{listed ? "Sign in to trade" : "Market not listed"}</button>
-        : <button type="submit" className={`trade-order__submit ${side === "SELL" ? "is-sell" : ""}`} disabled={busy || !listed}>{!listed ? "Market not listed" : busy ? "Submitting…" : `${side === "BUY" ? "Buy / Long" : "Sell / Short"} ${type.toLowerCase()}`}</button>}
+      {!token ? <button type="button" className={`trade-order__submit ${side === "SELL" ? "is-sell" : ""}`} disabled={!listed || halted} onClick={onSignIn}>{halted ? "Trading halted" : listed ? "Sign in to trade" : "Market not listed"}</button>
+        : <button type="submit" className={`trade-order__submit ${side === "SELL" ? "is-sell" : ""}`} disabled={busy || !listed || halted}>{halted ? "Trading halted" : !listed ? "Market not listed" : busy ? "Submitting…" : `${side === "BUY" ? "Buy / Long" : "Sell / Short"} ${type.toLowerCase()}`}</button>}
     </form>
     <p className="trade-order__foot">Orders use simulated collateral. Review price, quantity, and leverage before submitting.</p>
   </section>;
@@ -145,6 +163,7 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   const [page, setPage] = useState(0);
   const [orders, setOrders] = useState<Order[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
+  const [liquidations, setLiquidations] = useState<Liquidation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -154,14 +173,14 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   useEffect(() => { setPage(0); }, [marketId, tab]);
 
   useEffect(() => {
-    if (!token || !listed) { setOrders([]); setPosition(null); setError(""); return; }
+    if (!token || !listed) { setOrders([]); setPosition(null); setLiquidations([]); setError(""); return; }
     const controller = new AbortController();
     setLoading(true); setError("");
-    const path = tab === "positions"
-      ? `/market/position/${encodeURIComponent(marketId)}`
+    const path = tab === "positions" ? `/market/position/${encodeURIComponent(marketId)}`
+      : tab === "liquidations" ? `/market/${encodeURIComponent(marketId)}/liquidations`
       : `/order?market_id=${encodeURIComponent(marketId)}&view=${tab}`;
-    api<{ engine_response?: { data?: Position }; orders?: Order[] }>(path, { headers: { token }, signal: controller.signal })
-      .then((data) => { if (tab === "positions") setPosition(data.engine_response?.data ?? null); else setOrders(data.orders ?? []); })
+    api<{ engine_response?: { data?: Position }; orders?: Order[]; liquidations?: Liquidation[] }>(path, { headers: { token }, signal: controller.signal })
+      .then((data) => { if (tab === "positions") setPosition(data.engine_response?.data ?? null); else if (tab === "liquidations") setLiquidations(data.liquidations ?? []); else setOrders(data.orders ?? []); })
       .catch((cause) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Account data unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -186,17 +205,19 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
       <button type="button" role="tab" aria-selected={tab === "open"} className={tab === "open" ? "is-active" : ""} onClick={() => setTab("open")}>Open orders</button>
       <button type="button" role="tab" aria-selected={tab === "history"} className={tab === "history" ? "is-active" : ""} onClick={() => setTab("history")}>Order history</button>
       <button type="button" role="tab" aria-selected={tab === "positions"} className={tab === "positions" ? "is-active" : ""} onClick={() => setTab("positions")}>Positions</button>
+      <button type="button" role="tab" aria-selected={tab === "liquidations"} className={tab === "liquidations" ? "is-active" : ""} onClick={() => setTab("liquidations")}>Liquidations</button>
     </div><button type="button" className="trade-icon-button" onClick={() => setLocalRefresh((value) => value + 1)} disabled={!token || !listed} aria-label="Refresh account data" title="Refresh account data">↻</button></div>
     {!listed ? <div className="trade-account__empty">Account data appears for listed markets.</div>
-      : !token ? <div className="trade-account__empty"><strong>Connect your account to see {tab === "positions" ? "positions" : tab === "open" ? "open orders" : "order history"}.</strong><button type="button" onClick={onSignIn}>Sign in <span aria-hidden="true">↗</span></button></div>
-      : loading ? <div className="trade-account__empty">Loading {tab === "positions" ? "position" : "orders"}…</div>
+      : !token ? <div className="trade-account__empty"><strong>Connect your account to see {tab === "positions" ? "positions" : tab === "liquidations" ? "liquidations" : tab === "open" ? "open orders" : "order history"}.</strong><button type="button" onClick={onSignIn}>Sign in <span aria-hidden="true">↗</span></button></div>
+      : loading ? <div className="trade-account__empty">Loading {tab === "positions" ? "position" : tab === "liquidations" ? "liquidations" : "orders"}…</div>
       : error ? <div className="trade-account__empty is-error" role="alert">{error}</div>
-      : tab === "positions" ? position ? <div className="trade-account__position"><div><span>TYPE</span><strong className={position.type === "LONG" ? "is-buy" : "is-sell"}>{position.type}</strong></div><div><span>QUANTITY</span><strong>{grouped(position.quantity)}</strong></div><div><span>AVG ENTRY</span><strong>{grouped(position.avg_entry_price)}</strong></div><div><span>MARGIN</span><strong>{grouped(position.reserved_margin)}</strong></div><div><span>UNREALIZED PNL</span><strong>{grouped(position.unrealized_pnl)}</strong></div><div><span>FUNDING</span><strong>{grouped(position.funding_accrued)}</strong></div></div>
+      : tab === "positions" ? position ? <div className="trade-account__position"><div><span>TYPE</span><strong className={position.type === "LONG" ? "is-buy" : "is-sell"}>{position.type}</strong></div><div><span>STATUS</span><strong className={position.state === "HEALTHY" ? "is-buy" : "is-sell"}>{position.state}</strong></div><div><span>QUANTITY</span><strong>{grouped(position.quantity)}</strong></div><div><span>AVG ENTRY</span><strong>{grouped(position.avg_entry_price)}</strong></div><div><span>MARGIN</span><strong>{grouped(position.reserved_margin)}</strong></div><div><span>EQUITY</span><strong>{position.equity ? grouped(position.equity) : "—"}</strong></div><div><span>MAINTENANCE</span><strong>{position.maintenance_margin ? grouped(position.maintenance_margin) : "—"}</strong></div><div><span>LIQ. PRICE</span><strong>{position.liquidation_price ? grouped(position.liquidation_price) : "—"}</strong></div><div><span>UNREALIZED PNL</span><strong>{grouped(position.unrealized_pnl)}</strong></div></div>
         : <div className="trade-account__empty">No position in this market.</div>
+      : tab === "liquidations" ? liquidations.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>TIME</th><th>STATUS</th><th>FILLED</th><th>REMAINING</th><th>FEE</th><th>REFUND</th><th>INSURANCE / DEFICIT</th></tr></thead><tbody>{liquidations.slice(page * pageSize, (page + 1) * pageSize).map((item) => <tr key={item.liquidation_id}><td>{new Date(item.created_at).toLocaleString()}</td><td className={item.status === "COMPLETED" ? "is-buy" : "is-sell"}>{item.status}</td><td>{grouped(item.total_filled)}</td><td>{grouped(item.remaining_quantity)}</td><td>{grouped(item.total_liquidation_fee)}</td><td>{grouped(item.total_user_refund)}</td><td>{grouped(item.total_shortfall_covered)} / {grouped(item.total_uncovered_shortfall)}</td></tr>)}</tbody></table></div> : <div className="trade-account__empty">No liquidation history for this market.</div>
       : orders.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>ORDER</th><th>SIDE</th><th>TYPE</th><th>PRICE</th><th>QTY / FILLED</th><th>LEVERAGE</th><th>STATUS</th><th>{tab === "open" ? "ACTION" : "UPDATED"}</th></tr></thead><tbody>{visibleOrders.map((order) => <tr key={order.order_id}><td title={order.order_id}>{order.order_id.slice(0, 13)}…</td><td className={order.side === "BUY" ? "is-buy" : "is-sell"}>{order.side}</td><td>{order.type}</td><td>{order.type === "MARKET" ? "Market" : formatScaled(order.price)}</td><td>{formatScaled(order.quantity)} / {formatScaled(order.filled)}</td><td>{formatScaled(order.leverage)}×</td><td>{order.status.replaceAll("_", " ")}</td><td>{tab === "open" ? <button type="button" className="trade-account__cancel" disabled={canceling === order.order_id} onClick={() => void cancelOrder(order.order_id)}>{canceling === order.order_id ? "Canceling…" : "Cancel"}</button> : new Date(order.updated_at).toLocaleString()}</td></tr>)}</tbody></table></div>
         : <div className="trade-account__empty">No {tab === "open" ? "open orders" : "order history"} for this market.</div>}
     {actionError && <p className="trade-account__error" role="alert">{actionError}</p>}
-    {token && listed && tab !== "positions" && orders.length > 0 && <div className="trade-account__pager"><span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, orders.length)} of {orders.length}</span><div><button type="button" onClick={() => setPage(Math.max(0, currentPage - 1))} disabled={currentPage === 0} aria-label="Previous orders">←</button><button type="button" onClick={() => setPage(Math.min(lastPage, currentPage + 1))} disabled={currentPage === lastPage} aria-label="Next orders">→</button></div></div>}
+    {token && listed && tab !== "positions" && (tab === "liquidations" ? liquidations.length : orders.length) > 0 && <div className="trade-account__pager"><span>{page * pageSize + 1}–{Math.min((page + 1) * pageSize, tab === "liquidations" ? liquidations.length : orders.length)} of {tab === "liquidations" ? liquidations.length : orders.length}</span><div><button type="button" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} aria-label="Previous records">←</button><button type="button" onClick={() => setPage(Math.min(Math.max(0, Math.ceil((tab === "liquidations" ? liquidations.length : orders.length) / pageSize) - 1), page + 1))} disabled={page >= Math.ceil((tab === "liquidations" ? liquidations.length : orders.length) / pageSize) - 1} aria-label="Next records">→</button></div></div>}
   </section>;
 }
 
@@ -346,6 +367,9 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
           } else if (data.event_type === "TICKER") {
             const last = typeof data.last_traded_price === "string" ? data.last_traded_price : null;
             if (last) setLastPrice(last);
+            if (typeof data.trading_halted === "boolean") {
+              setMarket((current) => current ? { ...current, trading_halted: data.trading_halted as boolean } : current);
+            }
           }
         } catch { /* Ignore the WebSocket greeting and subscription acknowledgements. */ }
       };
@@ -369,7 +393,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
   return <main className="trade-page">
     <div className="trade-page__inner">
       <div className="trade-market-head">
-        <div className="trade-market-head__pair">{icon ? <img src={icon} alt="" width="44" height="44" /> : <span className="trade-market-head__fallback">↗</span>}<h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1><span className="trade-market-head__badge">PERP</span></div>
+        <div className="trade-market-head__pair">{icon ? <img src={icon} alt="" width="44" height="44" /> : <span className="trade-market-head__fallback">↗</span>}<h1>{market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")}</h1><span className="trade-market-head__badge">{market?.trading_halted ? "HALTED" : "PERP"}</span></div>
         <div className={`trade-market-head__price ${changeClass}`}>{fmt(ticker?.price ?? null)}</div>
         <div className="trade-market-head__facts">
           <div><span>24H Change</span><strong className={changeClass}>{ticker?.change === null || ticker?.change === undefined ? "—" : `${changeSign}${fmt(ticker.change)}  ${changeSign}${fmt(ticker.changePercent, 2)}%`}</strong></div>
@@ -382,7 +406,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
       <div className="trade-workspace">
         <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} />
         <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades.slice(-20).reverse()} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
-        <OrderForm marketId={marketId} listed={listed} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
+        <OrderForm marketId={marketId} listed={listed} halted={Boolean(market?.trading_halted)} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
         <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh + accountEventRevision} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
       </div>
     </div>

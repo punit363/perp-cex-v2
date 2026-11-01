@@ -2,12 +2,18 @@ import type {
   OrderSide,
   OrderStatus,
   OrderType,
-  PositionType
+  PositionType,
 } from "commons/src/order.type";
 
 interface CollateralBalance {
   available: bigint;
   reserved: bigint;
+}
+
+enum PositionState {
+  HEALTHY = "HEALTHY",
+  LIQUIDATING = "LIQUIDATING",
+  BANKRUPT = "BANKRUPT",
 }
 
 interface Position {
@@ -18,6 +24,9 @@ interface Position {
   avg_entry_price: bigint;
   unrealized_pnl: bigint;
   funding_accrued: bigint;
+  state: PositionState;
+  liquidation_id?: string;
+  liquidation_attempts: number;
 }
 
 interface UserAccount {
@@ -79,6 +88,12 @@ interface SnapshotMarket {
   last_traded_price: string;
   last_trade_id: string;
   orders: SnapshotOrder[];
+  risk_config?: {
+    maintenance_margin_rate: string;
+    liquidation_fee_rate: string;
+    max_leverage: string | null;
+    max_liquidation_quantity: string | null;
+  };
 }
 
 interface SnapshotPosition {
@@ -89,6 +104,9 @@ interface SnapshotPosition {
   avg_entry_price: string;
   unrealized_pnl: string;
   funding_accrued: string;
+  state?: PositionState;
+  liquidation_id?: string;
+  liquidation_attempts?: number;
 }
 
 interface SnapshotAccount {
@@ -178,7 +196,7 @@ interface InsuranceFundSettlement {
 }
 
 interface EngineSnapshot {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5 | 6;
   snapshot_time: number;
   scale: number;
   last_applied_stream_id: string;
@@ -187,6 +205,7 @@ interface EngineSnapshot {
   mark_prices: SnapshotMarkPrice[];
   insurance_fund?: SnapshotInsuranceFund;
   trading_fee_account?: SnapshotTradingFeeAccount;
+  halted_markets?: string[];
 }
 
 interface Fill {
@@ -243,5 +262,7 @@ export type {
   EngineSnapshot,
   Fill,
   PlaceOrderResult,
-  markPriceMetadata
+  markPriceMetadata,
 };
+
+export { PositionState };
