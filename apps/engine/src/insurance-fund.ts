@@ -127,6 +127,32 @@ class InsuranceFund {
     };
   }
 
+  available(): bigint {
+    return this.balance;
+  }
+
+  coverFundingShortfall(amount: bigint, market_id: string, user_id: string, interval_end_ms: number): SnapshotInsuranceFund & { entries: InsuranceFundLedgerEntry[] } {
+    if (amount < 0n || amount > this.balance) {
+      throw new Error("Funding shortfall exceeds insurance fund balance");
+    }
+    this.balance -= amount;
+    this.totalShortfallCovered += amount;
+    return {
+      ...this.snapshot(),
+      entries: [{
+        entry_id: `funding:${market_id}:${interval_end_ms}:${user_id}:cover`,
+        market_id,
+        user_id,
+        liquidation_order_id: null,
+        funding_interval_end_ms: interval_end_ms,
+        type: "FUNDING_SHORTFALL_COVER",
+        amount: -amount,
+        balance_after: this.balance,
+        uncovered_shortfall: 0n,
+      }],
+    };
+  }
+
   snapshot(): SnapshotInsuranceFund {
     return {
       collateral_asset: this.collateralAsset,

@@ -32,14 +32,20 @@ function bestPrice(prices: Set<bigint>, side: "bid" | "ask"): bigint | null {
 }
 
 class MarketData {
-  private readonly markets: { slug: string; base: string; quote: string }[];
+  private markets: { slug: string; base: string; quote: string }[] = [];
   private readonly requiredPairs = new Set<string>();
   private readonly products = new Map<SpotVenue, Map<string, Product>>();
+  private readonly catalogs = new Map<SpotVenue, Map<string, Product>>();
   private readonly quotes = new Map<SpotVenue, Map<string, SpotQuote>>();
   private readonly coinbaseBooks = new Map<string, Book>();
   private readonly lastMessageAt = new Map<SpotVenue, number>();
 
   constructor(marketSlugs: string[]) {
+    this.setMarkets(marketSlugs);
+  }
+
+  setMarkets(marketSlugs: string[]): Record<SpotVenue, string[]> {
+    this.requiredPairs.clear();
     this.markets = marketSlugs.map((slug) => {
       const [base, quote, extra] = slug.split("-");
       if (!base || !quote || extra) throw new Error("Invalid market slug: " + slug);
@@ -57,6 +63,7 @@ class MarketData {
       }
       return { slug, base, quote };
     });
+    return { coinbase: this.refreshProducts("coinbase"), kraken: this.refreshProducts("kraken") };
   }
 
   markVenueSeen(venue: SpotVenue, now: number): void {
@@ -70,6 +77,7 @@ class MarketData {
   clearVenue(venue: SpotVenue): void {
     this.lastMessageAt.delete(venue);
     this.products.delete(venue);
+    this.catalogs.delete(venue);
     this.quotes.delete(venue);
     if (venue === "coinbase") this.coinbaseBooks.clear();
   }
@@ -79,13 +87,21 @@ class MarketData {
   }
 
   private setProducts(venue: SpotVenue, incoming: Product[], replace: boolean): string[] {
-    const previous = this.products.get(venue) ?? new Map<string, Product>();
-    const next = replace ? new Map<string, Product>() : new Map(previous);
+    const catalog = replace ? new Map<string, Product>() : new Map(this.catalogs.get(venue));
     for (const product of incoming) {
-      if (product.status === "online" && this.requiredPairs.has(pairKey(product.base, product.quote))) {
+      if (product.status === "online") catalog.set(product.symbol, product);
+      else catalog.delete(product.symbol);
+    }
+    this.catalogs.set(venue, catalog);
+    return this.refreshProducts(venue);
+  }
+
+  private refreshProducts(venue: SpotVenue): string[] {
+    const previous = this.products.get(venue) ?? new Map<string, Product>();
+    const next = new Map<string, Product>();
+    for (const product of this.catalogs.get(venue)?.values() ?? []) {
+      if (this.requiredPairs.has(pairKey(product.base, product.quote))) {
         next.set(product.symbol, product);
-      } else {
-        next.delete(product.symbol);
       }
     }
     const quotes = this.quotes.get(venue);

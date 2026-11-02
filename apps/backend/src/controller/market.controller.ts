@@ -8,6 +8,7 @@ import { TradeRepo } from "db/repositories/trade.repo";
 import { CandleRepo } from "db/repositories/candle.repo";
 import { LiquidationRepo } from "db/repositories/liquidation.repo";
 import { formatScaledInteger } from "commons/src/fixed";
+import { FundingRepo } from "db/repositories/funding.repo";
 
 const list_markets = async (_req: Request, res: Response) => {
   try {
@@ -21,6 +22,10 @@ const list_markets = async (_req: Request, res: Response) => {
         liquidation_fee_rate: market.liquidation_fee_rate?.toString() ?? null,
         max_leverage: market.max_leverage?.toString() ?? null,
         max_liquidation_quantity: market.max_liquidation_quantity?.toString() ?? null,
+        funding_fixed_rate: market.funding_fixed_rate?.toString() ?? null,
+        funding_last_rate: market.funding_last_rate?.toString() ?? null,
+        last_funding_ms: market.last_funding_ms?.toString() ?? null,
+        next_funding_ms: market.next_funding_ms?.toString() ?? null,
       })),
     }));
   } catch (error) {
@@ -43,6 +48,10 @@ const get_market = async (req: Request, res: Response) => {
         liquidation_fee_rate: market.liquidation_fee_rate?.toString() ?? null,
         max_leverage: market.max_leverage?.toString() ?? null,
         max_liquidation_quantity: market.max_liquidation_quantity?.toString() ?? null,
+        funding_fixed_rate: market.funding_fixed_rate?.toString() ?? null,
+        funding_last_rate: market.funding_last_rate?.toString() ?? null,
+        last_funding_ms: market.last_funding_ms?.toString() ?? null,
+        next_funding_ms: market.next_funding_ms?.toString() ?? null,
       },
     }));
   } catch (error) {
@@ -198,4 +207,56 @@ const get_liquidations = async (req: Request, res: Response) => {
   }
 };
 
-export { list_markets, get_market, get_market_trades, get_market_candles, get_depth, get_position, get_liquidations };
+const get_funding_rate = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const result = await loopback({ action: "GET_FUNDING_RATE", market_id }) as EngineResponse;
+    if (!result.status) return res.status(400).json(handleError(result.message, 0));
+    return res.status(200).json(handleResponse("Funding state fetched", 1, { funding: result.data }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+const get_funding_history = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const intervals = await FundingRepo.listIntervals(market_id);
+    return res.status(200).json(handleResponse("Funding intervals fetched", 1, {
+      intervals: intervals.map((row) => ({
+        market_id: row.market_id, interval_end_ms: Number(row.interval_end_ms),
+        index_price: formatScaledInteger(row.index_price), rate: formatScaledInteger(row.rate),
+        sample_count: row.sample_count, status: row.status,
+        total_paid: formatScaledInteger(row.total_paid),
+        insurance_used: formatScaledInteger(row.insurance_used),
+        uncovered_shortfall: formatScaledInteger(row.uncovered_shortfall),
+      })),
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+const get_funding_payments = async (req: Request, res: Response) => {
+  try {
+    const market_id = req.params.market_id as string;
+    const rows = await FundingRepo.listPayments(req.user_id as string, market_id);
+    return res.status(200).json(handleResponse("Funding payments fetched", 1, {
+      payments: rows.map((row) => ({
+        interval_end_ms: Number(row.interval_end_ms), amount: formatScaledInteger(row.amount),
+        requested_amount: formatScaledInteger(row.requested_amount),
+        available_debit: formatScaledInteger(row.available_debit),
+        margin_debit: formatScaledInteger(row.margin_debit),
+        insurance_covered: formatScaledInteger(row.insurance_covered),
+        uncovered_shortfall: formatScaledInteger(row.uncovered_shortfall),
+      })),
+    }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return res.status(500).json(handleError(err.message, 0));
+  }
+};
+
+export { list_markets, get_market, get_market_trades, get_market_candles, get_depth, get_position, get_liquidations, get_funding_rate, get_funding_history, get_funding_payments };

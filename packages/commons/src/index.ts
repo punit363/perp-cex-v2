@@ -2,6 +2,11 @@ import type { OrderSide, OrderStatus, OrderType } from "./order.type";
 
 type RequestToEngine =
   | {
+      action: "REGISTER_MARKET";
+      market_id: string;
+      slug: string;
+    }
+  | {
       action: "SET_MARKET_RISK";
       market_id: string;
       maintenance_margin_rate: string;
@@ -36,7 +41,16 @@ type RequestToEngine =
   | {
       action: "GET_FUNDING_RATE";
       market_id: string;
-      funding_rate: string;
+    }
+  | {
+      action: "SET_FUNDING_RATE";
+      market_id: string;
+      funding_rate: string | null;
+    }
+  | {
+      action: "SETTLE_FUNDING";
+      market_id: string;
+      interval_end_ms: number;
     }
   | {
       action: "MARK_PRICE_UPDATE";

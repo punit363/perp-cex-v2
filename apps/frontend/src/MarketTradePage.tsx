@@ -44,7 +44,9 @@ type Liquidation = {
   attempts: number;
   created_at: string;
 };
-type AccountTab = "open" | "history" | "positions" | "liquidations";
+type FundingPayment = { interval_end_ms: number; amount: string; available_debit: string; margin_debit: string; insurance_covered: string; uncovered_shortfall: string };
+type FundingState = { rate: string; next_funding_ms: number; last_settled_ms: number; sample_count: number; ready: boolean; mode?: string };
+type AccountTab = "open" | "history" | "positions" | "liquidations" | "funding";
 type Envelope<T> = { status?: string; message?: string; data?: T };
 
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/;
@@ -164,6 +166,7 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   const [orders, setOrders] = useState<Order[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
   const [liquidations, setLiquidations] = useState<Liquidation[]>([]);
+  const [fundingPayments, setFundingPayments] = useState<FundingPayment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -173,14 +176,15 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   useEffect(() => { setPage(0); }, [marketId, tab]);
 
   useEffect(() => {
-    if (!token || !listed) { setOrders([]); setPosition(null); setLiquidations([]); setError(""); return; }
+    if (!token || !listed) { setOrders([]); setPosition(null); setLiquidations([]); setFundingPayments([]); setError(""); return; }
     const controller = new AbortController();
     setLoading(true); setError("");
     const path = tab === "positions" ? `/market/position/${encodeURIComponent(marketId)}`
       : tab === "liquidations" ? `/market/${encodeURIComponent(marketId)}/liquidations`
+      : tab === "funding" ? `/market/${encodeURIComponent(marketId)}/funding/payments`
       : `/order?market_id=${encodeURIComponent(marketId)}&view=${tab}`;
-    api<{ engine_response?: { data?: Position }; orders?: Order[]; liquidations?: Liquidation[] }>(path, { headers: { token }, signal: controller.signal })
-      .then((data) => { if (tab === "positions") setPosition(data.engine_response?.data ?? null); else if (tab === "liquidations") setLiquidations(data.liquidations ?? []); else setOrders(data.orders ?? []); })
+    api<{ engine_response?: { data?: Position }; orders?: Order[]; liquidations?: Liquidation[]; payments?: FundingPayment[] }>(path, { headers: { token }, signal: controller.signal })
+      .then((data) => { if (tab === "positions") setPosition(data.engine_response?.data ?? null); else if (tab === "liquidations") setLiquidations(data.liquidations ?? []); else if (tab === "funding") setFundingPayments(data.payments ?? []); else setOrders(data.orders ?? []); })
       .catch((cause) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Account data unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -206,6 +210,7 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
       <button type="button" role="tab" aria-selected={tab === "history"} className={tab === "history" ? "is-active" : ""} onClick={() => setTab("history")}>Order history</button>
       <button type="button" role="tab" aria-selected={tab === "positions"} className={tab === "positions" ? "is-active" : ""} onClick={() => setTab("positions")}>Positions</button>
       <button type="button" role="tab" aria-selected={tab === "liquidations"} className={tab === "liquidations" ? "is-active" : ""} onClick={() => setTab("liquidations")}>Liquidations</button>
+      <button type="button" role="tab" aria-selected={tab === "funding"} className={tab === "funding" ? "is-active" : ""} onClick={() => setTab("funding")}>Funding</button>
     </div><button type="button" className="trade-icon-button" onClick={() => setLocalRefresh((value) => value + 1)} disabled={!token || !listed} aria-label="Refresh account data" title="Refresh account data">↻</button></div>
     {!listed ? <div className="trade-account__empty">Account data appears for listed markets.</div>
       : !token ? <div className="trade-account__empty"><strong>Connect your account to see {tab === "positions" ? "positions" : tab === "liquidations" ? "liquidations" : tab === "open" ? "open orders" : "order history"}.</strong><button type="button" onClick={onSignIn}>Sign in <span aria-hidden="true">↗</span></button></div>
@@ -214,15 +219,17 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
       : tab === "positions" ? position ? <div className="trade-account__position"><div><span>TYPE</span><strong className={position.type === "LONG" ? "is-buy" : "is-sell"}>{position.type}</strong></div><div><span>STATUS</span><strong className={position.state === "HEALTHY" ? "is-buy" : "is-sell"}>{position.state}</strong></div><div><span>QUANTITY</span><strong>{grouped(position.quantity)}</strong></div><div><span>AVG ENTRY</span><strong>{grouped(position.avg_entry_price)}</strong></div><div><span>MARGIN</span><strong>{grouped(position.reserved_margin)}</strong></div><div><span>EQUITY</span><strong>{position.equity ? grouped(position.equity) : "—"}</strong></div><div><span>MAINTENANCE</span><strong>{position.maintenance_margin ? grouped(position.maintenance_margin) : "—"}</strong></div><div><span>LIQ. PRICE</span><strong>{position.liquidation_price ? grouped(position.liquidation_price) : "—"}</strong></div><div><span>UNREALIZED PNL</span><strong>{grouped(position.unrealized_pnl)}</strong></div></div>
         : <div className="trade-account__empty">No position in this market.</div>
       : tab === "liquidations" ? liquidations.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>TIME</th><th>STATUS</th><th>FILLED</th><th>REMAINING</th><th>FEE</th><th>REFUND</th><th>INSURANCE / DEFICIT</th></tr></thead><tbody>{liquidations.slice(page * pageSize, (page + 1) * pageSize).map((item) => <tr key={item.liquidation_id}><td>{new Date(item.created_at).toLocaleString()}</td><td className={item.status === "COMPLETED" ? "is-buy" : "is-sell"}>{item.status}</td><td>{grouped(item.total_filled)}</td><td>{grouped(item.remaining_quantity)}</td><td>{grouped(item.total_liquidation_fee)}</td><td>{grouped(item.total_user_refund)}</td><td>{grouped(item.total_shortfall_covered)} / {grouped(item.total_uncovered_shortfall)}</td></tr>)}</tbody></table></div> : <div className="trade-account__empty">No liquidation history for this market.</div>
+      : tab === "funding" ? fundingPayments.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>INTERVAL</th><th>PAYMENT</th><th>AVAILABLE / MARGIN</th><th>INSURANCE / UNPAID</th></tr></thead><tbody>{fundingPayments.slice(page * pageSize, (page + 1) * pageSize).map((item) => <tr key={item.interval_end_ms}><td>{new Date(item.interval_end_ms).toLocaleString()}</td><td className={item.amount.startsWith("-") ? "is-sell" : "is-buy"}>{item.amount}</td><td>{item.available_debit} / {item.margin_debit}</td><td>{item.insurance_covered} / {item.uncovered_shortfall}</td></tr>)}</tbody></table></div> : <div className="trade-account__empty">No funding payments for this market.</div>
       : orders.length ? <div className="trade-account__table-wrap"><table><thead><tr><th>ORDER</th><th>SIDE</th><th>TYPE</th><th>PRICE</th><th>QTY / FILLED</th><th>LEVERAGE</th><th>STATUS</th><th>{tab === "open" ? "ACTION" : "UPDATED"}</th></tr></thead><tbody>{visibleOrders.map((order) => <tr key={order.order_id}><td title={order.order_id}>{order.order_id.slice(0, 13)}…</td><td className={order.side === "BUY" ? "is-buy" : "is-sell"}>{order.side}</td><td>{order.type}</td><td>{order.type === "MARKET" ? "Market" : formatScaled(order.price)}</td><td>{formatScaled(order.quantity)} / {formatScaled(order.filled)}</td><td>{formatScaled(order.leverage)}×</td><td>{order.status.replaceAll("_", " ")}</td><td>{tab === "open" ? <button type="button" className="trade-account__cancel" disabled={canceling === order.order_id} onClick={() => void cancelOrder(order.order_id)}>{canceling === order.order_id ? "Canceling…" : "Cancel"}</button> : new Date(order.updated_at).toLocaleString()}</td></tr>)}</tbody></table></div>
         : <div className="trade-account__empty">No {tab === "open" ? "open orders" : "order history"} for this market.</div>}
     {actionError && <p className="trade-account__error" role="alert">{actionError}</p>}
-    {token && listed && tab !== "positions" && (tab === "liquidations" ? liquidations.length : orders.length) > 0 && <div className="trade-account__pager"><span>{page * pageSize + 1}–{Math.min((page + 1) * pageSize, tab === "liquidations" ? liquidations.length : orders.length)} of {tab === "liquidations" ? liquidations.length : orders.length}</span><div><button type="button" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} aria-label="Previous records">←</button><button type="button" onClick={() => setPage(Math.min(Math.max(0, Math.ceil((tab === "liquidations" ? liquidations.length : orders.length) / pageSize) - 1), page + 1))} disabled={page >= Math.ceil((tab === "liquidations" ? liquidations.length : orders.length) / pageSize) - 1} aria-label="Next records">→</button></div></div>}
+    {token && listed && tab !== "positions" && (tab === "liquidations" ? liquidations.length : tab === "funding" ? fundingPayments.length : orders.length) > 0 && <div className="trade-account__pager"><span>{page * pageSize + 1}–{Math.min((page + 1) * pageSize, tab === "liquidations" ? liquidations.length : tab === "funding" ? fundingPayments.length : orders.length)} of {tab === "liquidations" ? liquidations.length : tab === "funding" ? fundingPayments.length : orders.length}</span><div><button type="button" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} aria-label="Previous records">←</button><button type="button" onClick={() => setPage(Math.min(Math.max(0, Math.ceil((tab === "liquidations" ? liquidations.length : tab === "funding" ? fundingPayments.length : orders.length) / pageSize) - 1), page + 1))} disabled={page >= Math.ceil((tab === "liquidations" ? liquidations.length : tab === "funding" ? fundingPayments.length : orders.length) / pageSize) - 1} aria-label="Next records">→</button></div></div>}
   </section>;
 }
 
 export function MarketTradePage({ marketId, token, accountEventRevision, onSignIn, onBalanceRefresh }: { marketId: string; token: string | null; accountEventRevision: number; onSignIn: () => void; onBalanceRefresh: () => void }) {
   const [market, setMarket] = useState<Market | null>(null);
+  const [funding, setFunding] = useState<FundingState | null>(null);
   const [preview, setPreview] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState("");
@@ -246,7 +253,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
 
   useEffect(() => {
     bookUpdateVersion.current = 0;
-    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
+    setMarket(null); setFunding(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
     if (previewPairs.includes(marketId)) {
       setMarket({ market_id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
       setPreview(true); setMarketLoading(false); return;
@@ -263,6 +270,15 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
       .finally(() => { if (!controller.signal.aborted) setMarketLoading(false); });
     return () => controller.abort();
   }, [marketId]);
+
+  useEffect(() => {
+    if (!market || preview || !market.slug.endsWith("-USDT")) return;
+    const controller = new AbortController();
+    api<{ funding: FundingState }>(`/market/${encodeURIComponent(market.market_id)}/funding`, { signal: controller.signal })
+      .then(({ funding }) => { if (!controller.signal.aborted) setFunding(funding); })
+      .catch(() => { if (!controller.signal.aborted) setFunding(null); });
+    return () => controller.abort();
+  }, [market?.market_id, preview]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -337,7 +353,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
       socket.onopen = () => {
         if (stopped) return;
         setFeed("connected");
-        for (const type of ["BOOK", "TRADE", "TICKER", "CANDLE"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.market_id }));
+        for (const type of ["BOOK", "TRADE", "TICKER", "CANDLE", "FUNDING"]) socket.send(JSON.stringify({ action: "SUBSCRIBE", type, market_id: market.market_id }));
         setDepthRefresh((value) => value + 1);
         setCandleRefresh((value) => value + 1);
       };
@@ -364,6 +380,10 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
               quote_volume: data.quote_volume as string,
               trade_count: data.trade_count as number,
             }]));
+          } else if (data.event_type === "FUNDING" && typeof data.rate === "string" && typeof data.next_funding_ms === "number") {
+            setFunding({ rate: data.rate, ready: data.ready === true, next_funding_ms: data.next_funding_ms,
+              last_settled_ms: typeof data.last_settled_ms === "number" ? data.last_settled_ms : 0,
+              sample_count: typeof data.sample_count === "number" ? data.sample_count : 0 });
           } else if (data.event_type === "TICKER") {
             const last = typeof data.last_traded_price === "string" ? data.last_traded_price : null;
             if (last) setLastPrice(last);
@@ -382,7 +402,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
 
   const label = market ? partsOf(market.slug) : { base: "MARKET", quote: "" };
   const listed = Boolean(market && !preview);
-  const ticker = tickerFromTrades(trades, now);
+  const ticker = tickerFromTrades(trades, Date.now());
   const current = trades.at(-1)?.price ?? lastPrice;
   const icon = icons[label.base];
 
@@ -400,6 +420,7 @@ export function MarketTradePage({ marketId, token, accountEventRevision, onSignI
           <div><span>24H High</span><strong>{fmt(ticker?.high ?? null)}</strong></div>
           <div><span>24H Low</span><strong>{fmt(ticker?.low ?? null)}</strong></div>
           <div><span>24H Volume ({label.quote})</span><strong>{fmt(ticker?.volume ?? null, 2)}</strong></div>
+          {label.quote === "USDT" && <div><span>Funding / Next</span><strong className={funding?.ready ? Number(funding.rate) >= 0 ? "is-positive" : "is-negative" : ""}>{funding ? `${funding.ready ? `${(Number(funding.rate) * 100).toFixed(4)}%` : "Calibrating"} · ${Math.max(0, Math.ceil((funding.next_funding_ms - now) / 60_000))}m` : "—"}</strong></div>}
         </div>
       </div>
       {(preview || marketError) && <div className="trade-page__notice" role="status">{preview ? "This pair is a visual preview and is not listed for trading yet. Live prices, depth, and orders appear for listed markets." : marketError}</div>}

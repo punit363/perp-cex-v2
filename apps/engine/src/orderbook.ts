@@ -8,7 +8,7 @@ import type {
   SnapshotMarket,
   SnapshotOrder
 } from "./types";
-import { divideFixed, formatFixed, multiplyFixed } from "./math/fixed-point";
+import { divideFixed, divideRounded, formatFixed, multiplyFixed, SCALE } from "./math/fixed-point";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import {
@@ -89,6 +89,26 @@ class Orderbook {
       ...(bid !== undefined && { best_bid: formatFixed(bid) }),
       ...(ask !== undefined && { best_ask: formatFixed(ask) })
     };
+  }
+
+  /** Walk only enough levels to price the requested impact quantity. */
+  public getImpactPrices(targetQuantity: bigint): { bid: bigint; ask: bigint } | null {
+    const average = (levels: Iterable<[bigint, PriceLevel]>): bigint | null => {
+      let remaining = targetQuantity;
+      let total = 0n;
+      for (const [price, level] of levels) {
+        const filled = level.remaining_qty < remaining ? level.remaining_qty : remaining;
+        if (filled <= 0n) continue;
+        total += calculateNotional(price, filled);
+        remaining -= filled;
+        if (remaining === 0n) break;
+      }
+      return remaining === 0n ? divideRounded(total * SCALE, targetQuantity, "floor") : null;
+    };
+    if (targetQuantity <= 0n) return null;
+    const bid = average(this.bids.entriesReversed());
+    const ask = average(this.asks.entries());
+    return bid === null || ask === null ? null : { bid, ask };
   }
 
   hasOrder(order_id: string): boolean {

@@ -4,13 +4,15 @@ import type { MarkPriceUpdate, SpotVenue } from "./type";
 import { MarketRepo } from "db/repositories/market.repo";
 
 const SAMPLE_INTERVAL_MS = 1_000;
+const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000;
 const COINBASE_POLL_INTERVAL_MS = 200;
 const COINBASE_MAX_QUOTE_AGE_MS = 15_000;
 const MAX_CONNECTION_AGE_MS = 5_000;
 const DISCOVERY_TIMEOUT_MS = 30_000;
 const RECONNECT_DELAY_MS = 3_000;
+const MARKET_REFRESH_MS = 5_000;
 
-const markets = await MarketRepo.listMarkets();
+let markets = await MarketRepo.listMarkets();
 if (markets.length === 0) throw new Error("List markets before starting market data");
 
 const marketData = new MarketData(markets.map(({ slug }) => slug));
@@ -25,6 +27,7 @@ let krakenSubscribed = new Set<string>();
 let nextCoinbaseBook = 0;
 let lastCoinbaseBookWarning = 0;
 const publishedMarkets = new Set<string>();
+const sentFundingIntervals = new Map<string, { intervalEnd: number; lastSentAt: number; final: boolean }>();
 const unavailableReported = new Set<string>();
 const startedAt = Date.now();
 
@@ -145,6 +148,26 @@ connectKraken();
 const redis = new RedisHandler();
 await redis.connect();
 let publishInProgress = false;
+let marketRefreshInProgress = false;
+
+setInterval(async () => {
+  if (marketRefreshInProgress) return;
+  marketRefreshInProgress = true;
+  try {
+    const updated = await MarketRepo.listMarkets();
+    const signature = (items: typeof markets) => items.map(({ market_id, slug }) => `${market_id}:${slug}`).sort().join("|");
+    if (signature(updated) !== signature(markets)) {
+      const subscriptions = marketData.setMarkets(updated.map(({ slug }) => slug));
+      markets = updated;
+      if (coinbase?.readyState === WebSocket.OPEN) syncCoinbaseSubscriptions(coinbase, subscriptions.coinbase);
+      if (kraken?.readyState === WebSocket.OPEN) syncKrakenSubscriptions(kraken, subscriptions.kraken);
+    }
+  } catch (error) {
+    console.error("Failed to refresh market list:", error);
+  } finally {
+    marketRefreshInProgress = false;
+  }
+}, MARKET_REFRESH_MS);
 
 setInterval(() => {
   checkConnection("coinbase", coinbase, coinbaseOpenedAt, coinbaseSubscribed);
@@ -206,6 +229,17 @@ setInterval(async () => {
         sequence: String(++sequence),
       };
       await redis.sendMarkPriceToEngine(update);
+      if (market.slug.endsWith("-USDT")) {
+        const intervalEnd = Math.floor(now / FUNDING_INTERVAL_MS) * FUNDING_INTERVAL_MS;
+        const sent = sentFundingIntervals.get(market.market_id);
+        if (intervalEnd > 0 &&
+          (sent?.intervalEnd !== intervalEnd || (!sent.final && now - sent.lastSentAt >= 10_000))) {
+          await redis.sendFundingSettlement(market.market_id, intervalEnd);
+          sentFundingIntervals.set(market.market_id, {
+            intervalEnd, lastSentAt: now, final: now - intervalEnd >= 60_000,
+          });
+        }
+      }
       if (!publishedMarkets.has(market.slug)) {
         publishedMarkets.add(market.slug);
         unavailableReported.delete(market.slug);

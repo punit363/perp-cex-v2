@@ -19,6 +19,12 @@ class RedisHandler {
       request: JSON.stringify(market_data),
     });
   }
+
+  public async sendFundingSettlement(market_id: string, interval_end_ms: number) {
+    await this.publisher.xAdd("engine", "*", {
+      request: JSON.stringify({ action: "SETTLE_FUNDING", market_id, interval_end_ms }),
+    });
+  }
 }
 
 export default RedisHandler;

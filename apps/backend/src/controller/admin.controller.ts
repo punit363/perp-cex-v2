@@ -15,7 +15,13 @@ async function addMarket(req: Request, res: Response): Promise<void> {
       throw new AppError("Incorrect credentials", 411);
     }
 
-    const response = await MarketRepo.newMarket(market, "");
+    if (typeof market !== "string" || !/^[A-Z0-9]+-[A-Z0-9]+$/.test(market)) {
+      throw new AppError("Market must be an uppercase BASE-QUOTE pair", 400);
+    }
+    // Reuse a persisted market if a previous engine registration timed out.
+    const response = await MarketRepo.ensureMarket(market, "");
+    const registration = await loopback({ action: "REGISTER_MARKET", market_id: response.market_id, slug: response.slug }) as EngineResponse;
+    if (!registration.status) throw new AppError(registration.message, 503);
 
     res.status(200).send(
       handleResponse("New market created successfully", 1, { market_id: response.market_id })
@@ -61,4 +67,25 @@ async function setMarketRisk(req: Request, res: Response): Promise<void> {
   }
 }
 
-export { addMarket, setMarketRisk };
+async function setFundingRate(req: Request, res: Response): Promise<void> {
+  try {
+    if (!CONFIG.admin_token || req.headers.token !== CONFIG.admin_token) {
+      throw new AppError("Incorrect credentials", 401);
+    }
+    const market_id = req.params.market_id as string;
+    const funding_rate = (req.body as Record<string, unknown>)?.funding_rate;
+    if (!market_id || (funding_rate !== null && typeof funding_rate !== "string")) {
+      throw new AppError("Expected funding_rate as a decimal string or null", 400);
+    }
+    const result = await loopback({ action: "SET_FUNDING_RATE", market_id,
+      funding_rate: funding_rate as string | null }) as EngineResponse;
+    if (!result.status) { res.status(400).json(handleError(result.message, 0)); return; }
+    res.status(200).json(handleResponse(result.message, 1, { funding: result.data }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    res.status((error as { status_code?: number })?.status_code || 500)
+      .json(handleError(err.message, 0));
+  }
+}
+
+export { addMarket, setMarketRisk, setFundingRate };

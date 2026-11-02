@@ -6,6 +6,7 @@ import {
 } from "./math/fixed-point";
 import {
   PositionState,
+  type Position,
   type EngineSnapshot,
   type Fill,
   type markPriceMetadata,
@@ -38,6 +39,15 @@ import { calculateLiquidationFill, calculateLiquidationPrice, calculatePositionR
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import {
+  calculateFundingPayments,
+  clampFundingRate,
+  fundingIntervalEnd,
+  FUNDING_INTERVAL_MS,
+  MIN_FUNDING_SAMPLES,
+  samplePremium,
+  type FundingState,
+} from "./funding";
 
 const SNAPSHOT_PATH = fileURLToPath(
   new URL("../snapshot.json", import.meta.url)
@@ -72,6 +82,7 @@ type MarketRiskConfig = {
 };
 type MarketDefinition = {
   market_id: string;
+  slug: string;
 };
 
 export type EngineCommandResult = {
@@ -86,6 +97,8 @@ class Engine {
   private markPrices: Map<string, bigint> = new Map();
   private markPriceMetadata: Map<string, markPriceMetadata> = new Map();
   private marketRiskConfigs = new Map<string, MarketRiskConfig>();
+  private fundingStates = new Map<string, FundingState>();
+  private marketQuotes = new Map<string, string>();
   private positionUsersByMarket: Map<string, Set<string>> = new Map(); //market->users>
   private haltedMarkets = new Set<string>();
   private liquidationQueue = new Map<string, { user_id: string; market_id: string }>();
@@ -114,6 +127,7 @@ class Engine {
   } | null = null;
 
   private constructor(markets: MarketDefinition[]) {
+    for (const market of markets) this.marketQuotes.set(market.market_id, market.slug.split("-").at(-1) ?? "");
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
     this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
       MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
@@ -156,6 +170,15 @@ class Engine {
       this.accounts = new AccountStore(snapshot.accounts);
 
       snapshot.markets.forEach((market_data) => {
+        const funding = market_data.funding;
+        this.fundingStates.set(market_data.market_id, funding ? {
+          lastSettledIntervalMs: funding.last_settled_interval_ms,
+          fixedRate: funding.fixed_rate === null ? null : BigInt(funding.fixed_rate),
+          premiumSum: BigInt(funding.premium_sum),
+          premiumSamples: funding.premium_samples,
+          premiumIntervalMs: funding.premium_interval_ms,
+          lastRate: BigInt(funding.last_rate),
+        } : this.emptyFundingState());
         const saved = market_data.risk_config;
         this.marketRiskConfigs.set(market_data.market_id, this.validateRiskConfig({
           maintenanceMarginRate: saved ? BigInt(saved.maintenance_margin_rate) : this.MAINTENANCE_MARGIN_RATE,
@@ -217,6 +240,7 @@ class Engine {
     for (const market of markets) {
       const { market_id } = market;
       if (!this.orderbooks.has(market_id)) {
+        this.fundingStates.set(market_id, this.emptyFundingState());
         // Risk changes are replayed from the engine stream. DB values are a
         // projection and may be ahead of the snapshot cursor on recovery.
         this.marketRiskConfigs.set(market_id, this.validateRiskConfig({
@@ -263,6 +287,11 @@ class Engine {
     return config;
   }
 
+  private emptyFundingState(): FundingState {
+    return { lastSettledIntervalMs: 0, fixedRate: null, premiumSum: 0n,
+      premiumSamples: 0, premiumIntervalMs: 0, lastRate: 0n };
+  }
+
   private riskConfig(market_id: string): MarketRiskConfig {
     return this.marketRiskConfigs?.get(market_id) ?? {
       maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
@@ -298,7 +327,7 @@ class Engine {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
-        version: 6,
+        version: 7,
         snapshot_time: Date.now(),
         scale: Number(SCALE),
         last_applied_stream_id: this.lastAppliedStreamId,
@@ -334,6 +363,17 @@ class Engine {
           last_traded_price: String(last_traded_price),
           last_trade_id: String(last_trade_id),
           orders: orderbook.snapshotOrderbook(),
+          funding: (() => {
+            const state = this.fundingStates.get(market_id)!;
+            return {
+              last_settled_interval_ms: state.lastSettledIntervalMs,
+              fixed_rate: state.fixedRate === null ? null : String(state.fixedRate),
+              premium_sum: String(state.premiumSum),
+              premium_samples: state.premiumSamples,
+              premium_interval_ms: state.premiumIntervalMs,
+              last_rate: String(state.lastRate),
+            };
+          })(),
           risk_config: (() => {
             const risk = this.riskConfig(market_id);
             return {
@@ -378,6 +418,8 @@ class Engine {
           return this.getDepth(request);
         case "GET_POSITION":
           return this.getPosition(request);
+        case "REGISTER_MARKET":
+          return this.registerMarket(request);
         case "MARK_PRICE_UPDATE":
           return this.markPriceUpdate(request);
         case "RETRY_LIQUIDATIONS":
@@ -391,7 +433,11 @@ class Engine {
         case "SET_MARKET_RISK":
           return this.setMarketRisk(request);
         case "GET_FUNDING_RATE":
-          return engine_response("Updating soon", 0);
+          return this.getFundingRate(request);
+        case "SET_FUNDING_RATE":
+          return this.setFundingRate(request);
+        case "SETTLE_FUNDING":
+          return this.settleFunding(request);
         default:
           return engine_response("Unrecognised engine request action", 0);
       }
@@ -410,6 +456,8 @@ class Engine {
     sourceMessageId?: string
   ): EngineCommandResult {
     this.haltedMarkets ??= new Set();
+    this.fundingStates ??= new Map();
+    this.marketQuotes ??= new Map();
     this.liquidationQueue ??= new Map();
     this.processingLiquidations ??= false;
     const sourceTimestamp = sourceMessageId
@@ -503,6 +551,12 @@ class Engine {
                   ),
                   liquidation_attempts: events.db.flatMap(
                     (event) => event.changes.liquidation_attempts ?? []
+                  ),
+                  funding_intervals: events.db.flatMap(
+                    (event) => event.changes.funding_intervals ?? []
+                  ),
+                  funding_payments: events.db.flatMap(
+                    (event) => event.changes.funding_payments ?? []
                   ),
                 },
               },
@@ -635,6 +689,15 @@ class Engine {
     }
   }
 
+  private realizeClosedFunding(user_id: string, position: Position, closedQuantity: bigint): void {
+    if (position.funding_accrued === 0n) return;
+    const amount = closedQuantity === position.quantity
+      ? position.funding_accrued
+      : divideRounded(position.funding_accrued * closedQuantity, position.quantity, "toward-zero");
+    position.funding_accrued -= amount;
+    this.accounts.credit(user_id, amount);
+  }
+
   private setMarketRisk(request: CommandOf<"SET_MARKET_RISK">): EngineResponse {
     if (!this.orderbooks.has(request.market_id)) {
       throw new Error("Incorrect Market ID");
@@ -666,6 +729,169 @@ class Engine {
       }
     }
     return engine_response("Market risk configuration updated", 1);
+  }
+
+  private registerMarket(request: CommandOf<"REGISTER_MARKET">): EngineResponse {
+    const { market_id, slug } = request;
+    const quote = slug.split("-")[1]!;
+    if (this.orderbooks.has(market_id)) {
+      if (this.marketQuotes.get(market_id) !== quote) {
+        return engine_response("Market ID already exists with a different quote", 0);
+      }
+      return engine_response("Market already registered", 1, { market_id });
+    }
+    this.marketQuotes.set(market_id, quote);
+    this.orderbooks.set(market_id, new Orderbook({
+      market_id, last_traded_price: "0", last_trade_id: "", orders: [],
+    }, this.MAKER_FEE_RATE));
+    this.positionUsersByMarket.set(market_id, new Set());
+    this.fundingStates.set(market_id, this.emptyFundingState());
+    this.marketRiskConfigs.set(market_id, this.validateRiskConfig({
+      maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
+      liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
+      maxLeverage: null,
+      maxLiquidationQuantity: null,
+    }));
+    return engine_response("Market registered", 1, { market_id });
+  }
+
+  private estimatedFundingRate(state: FundingState): bigint {
+    if (state.fixedRate !== null) return state.fixedRate;
+    if (state.premiumSamples < MIN_FUNDING_SAMPLES) return 0n;
+    return clampFundingRate(divideRounded(state.premiumSum, BigInt(state.premiumSamples), "toward-zero"));
+  }
+
+  private fundingResponse(market_id: string) {
+    const state = this.fundingStates.get(market_id)!;
+    const now = this.replayTimestamp ?? Date.now();
+    return {
+      market_id,
+      rate: formatFixed(this.estimatedFundingRate(state)),
+      mode: state.fixedRate === null ? "PREMIUM" : "FIXED",
+      ready: state.fixedRate !== null || state.premiumSamples >= MIN_FUNDING_SAMPLES,
+      last_rate: formatFixed(state.lastRate),
+      last_settled_ms: state.lastSettledIntervalMs,
+      next_funding_ms: fundingIntervalEnd(now),
+      sample_count: state.premiumSamples,
+      minimum_samples: MIN_FUNDING_SAMPLES,
+    };
+  }
+
+  private getFundingRate(request: CommandOf<"GET_FUNDING_RATE">): EngineResponse {
+    if (!this.orderbooks.has(request.market_id)) return engine_response("Incorrect Market ID", 0);
+    return engine_response("Funding state retrieved", 1, this.fundingResponse(request.market_id));
+  }
+
+  private setFundingRate(request: CommandOf<"SET_FUNDING_RATE">): EngineResponse {
+    const state = this.fundingStates.get(request.market_id);
+    if (!state) return engine_response("Incorrect Market ID", 0);
+    if (request.funding_rate !== null &&
+      clampFundingRate(request.funding_rate) !== request.funding_rate) {
+      return engine_response("Funding rate exceeds the market cap", 0);
+    }
+    state.fixedRate = request.funding_rate;
+    this.emitDbEvent({ event_type: "FUNDING_CONFIG_UPDATE", changes: {
+      market_data: [{ market_id: request.market_id, funding_fixed_rate: state.fixedRate }],
+    } });
+    this.emitFundingState(request.market_id);
+    return engine_response("Funding configuration updated", 1, this.fundingResponse(request.market_id));
+  }
+
+  private emitFundingState(market_id: string): void {
+    const state = this.fundingStates.get(market_id)!;
+    this.emitWsEvent({ event_type: "FUNDING", data: {
+      market_id,
+      rate: formatFixed(this.estimatedFundingRate(state)),
+      ready: state.fixedRate !== null || state.premiumSamples >= MIN_FUNDING_SAMPLES,
+      next_funding_ms: fundingIntervalEnd(this.commandEvents?.timestampMs ?? Date.now()),
+      last_settled_ms: state.lastSettledIntervalMs,
+      sample_count: state.premiumSamples,
+    } });
+  }
+
+  private settleFunding(request: CommandOf<"SETTLE_FUNDING">): EngineResponse {
+    const { market_id, interval_end_ms } = request;
+    const state = this.fundingStates.get(market_id);
+    if (!state) return engine_response("Incorrect Market ID", 0);
+    if (this.marketQuotes.get(market_id) !== MARKET_CONFIG.COLLATERAL_ASSET) {
+      return engine_response("Funding requires a collateral-quoted market", 0);
+    }
+    const now = this.commandEvents?.timestampMs ?? this.replayTimestamp ?? Date.now();
+    if (interval_end_ms % FUNDING_INTERVAL_MS !== 0 || interval_end_ms > now) {
+      return engine_response("Invalid funding interval", 0);
+    }
+    if (interval_end_ms <= state.lastSettledIntervalMs) {
+      return engine_response("Funding interval already settled", 1, this.fundingResponse(market_id));
+    }
+    const late = now - interval_end_ms > 60_000;
+    // The current mark feed is a two-venue spot index. Keep this name explicit
+    // here so a future perp mark can diverge without changing funding notional.
+    const indexPrice = late ? 0n : this.requireFreshMarkPrice(market_id);
+    const sampleCount = state.premiumIntervalMs === interval_end_ms ? state.premiumSamples : 0;
+    const skipped = late || (state.fixedRate === null && sampleCount < MIN_FUNDING_SAMPLES);
+    const rate = skipped ? 0n : this.estimatedFundingRate(state);
+    const participants = [...(this.positionUsersByMarket.get(market_id) ?? [])]
+      .map((userId) => {
+        const account = this.accounts.get(userId)!;
+        const position = account.positions.get(market_id)!;
+        return { userId, account, position };
+      }).filter(({ position }) => position.quantity > 0n);
+    const batch = calculateFundingPayments(participants, indexPrice, rate, this.insuranceFund.available());
+    const { payments } = batch;
+    const insuranceChanges = payments
+      .filter((payment) => payment.insuranceCovered > 0n)
+      .map((payment) => this.insuranceFund.coverFundingShortfall(
+        payment.insuranceCovered, market_id, payment.userId, interval_end_ms,
+      ));
+    for (const payment of payments) {
+      const account = this.accounts.get(payment.userId)!;
+      account.collateral.available += payment.amount < 0n ? -payment.availableDebit : payment.amount;
+      if (payment.marginDebit) {
+        account.collateral.reserved -= payment.marginDebit;
+        account.positions.get(market_id)!.reserved_margin -= payment.marginDebit;
+      }
+    }
+    state.lastSettledIntervalMs = interval_end_ms;
+    state.lastRate = rate;
+    state.premiumSum = 0n;
+    state.premiumSamples = 0;
+    state.premiumIntervalMs = interval_end_ms + FUNDING_INTERVAL_MS;
+    this.emitDbEvent({ event_type: "FUNDING_SETTLEMENT", changes: {
+      balances: payments.map(({ userId }) => {
+        const collateral = this.accounts.get(userId)!.collateral;
+        return { user_id: userId, available: collateral.available, reserved: collateral.reserved };
+      }),
+      positions: payments.filter((payment) => payment.marginDebit > 0n).map(({ userId }) => ({
+        user_id: userId,
+        market_id,
+        position: this.accounts.get(userId)!.positions.get(market_id)!,
+      })),
+      market_data: [{ market_id, funding_last_rate: rate, last_funding_ms: interval_end_ms,
+        next_funding_ms: interval_end_ms + FUNDING_INTERVAL_MS }],
+      funding_intervals: [{ market_id, interval_end_ms, index_price: indexPrice,
+        rate, sample_count: sampleCount,
+        status: skipped ? "SKIPPED" : batch.uncoveredShortfall > 0n ? "PARTIAL" : "SETTLED",
+        total_paid: payments.reduce((sum, payment) => payment.amount > 0n ? sum + payment.amount : sum, 0n),
+        insurance_used: batch.insuranceUsed,
+        uncovered_shortfall: batch.uncoveredShortfall }],
+      funding_payments: payments.map((payment) => ({
+        market_id, interval_end_ms, user_id: payment.userId,
+        amount: payment.amount, requested_amount: payment.requestedAmount,
+        available_debit: payment.availableDebit,
+        margin_debit: payment.marginDebit,
+        insurance_covered: payment.insuranceCovered,
+        uncovered_shortfall: payment.uncoveredShortfall,
+      })),
+      ...(insuranceChanges.length > 0 && { insurance_fund: insuranceChanges }),
+    } });
+    this.emitFundingState(market_id);
+    for (const payment of payments) {
+      if (payment.marginDebit > 0n || payment.uncoveredShortfall > 0n) {
+        this.liquidationCheck({ user_id: payment.userId, market_id });
+      }
+    }
+    return engine_response(skipped ? "Funding skipped: late interval or insufficient premium samples" : "Funding settled", 1,
+      this.fundingResponse(market_id));
   }
 
   private requireFreshMarkPrice(market_id: string) {
@@ -930,6 +1156,7 @@ class Engine {
                 taker_acc.user_id,
                 taker_position.reserved_margin
               );
+              this.realizeClosedFunding(taker_acc.user_id, taker_position, taker_position.quantity);
 
               const realizedPnl = calcUnrealisedPnL(
                 taker_position.type,
@@ -996,6 +1223,7 @@ class Engine {
               );
 
               taker_position.reserved_margin -= margin_released;
+              this.realizeClosedFunding(taker_acc.user_id, taker_position, fill.filled);
               taker_position.quantity -= fill.filled;
 
               liquidation_risks.add(fill.taker_user_id);
@@ -1075,6 +1303,7 @@ class Engine {
                 maker_acc.user_id,
                 maker_position.reserved_margin
               );
+              this.realizeClosedFunding(maker_acc.user_id, maker_position, maker_position.quantity);
 
               const realizedPnl = calcUnrealisedPnL(
                 maker_position.type,
@@ -1145,6 +1374,7 @@ class Engine {
               );
 
               maker_position.reserved_margin -= margin_released;
+              this.realizeClosedFunding(maker_acc.user_id, maker_position, fill.filled);
               maker_position.quantity -= fill.filled;
 
               liquidation_risks.add(fill.maker_user_id);
@@ -1702,6 +1932,7 @@ class Engine {
               maker_acc.user_id,
               maker_position.reserved_margin
             );
+            this.realizeClosedFunding(maker_acc.user_id, maker_position, maker_position.quantity);
 
             const realizedPnl = calcUnrealisedPnL(
               maker_position.type,
@@ -1766,6 +1997,7 @@ class Engine {
             );
 
             maker_position.reserved_margin -= margin_released;
+            this.realizeClosedFunding(maker_acc.user_id, maker_position, fill.filled);
             maker_position.quantity -= fill.filled;
             liquidation_risks.add(fill.maker_user_id);
 
@@ -1990,6 +2222,27 @@ class Engine {
       source_timestamp,
       sequence: parsed_sequence,
     });
+    const funding = this.fundingStates.get(market_id);
+    const book = this.orderbooks.get(market_id);
+    if (funding && book && funding.fixedRate === null &&
+      this.marketQuotes.get(market_id) === MARKET_CONFIG.COLLATERAL_ASSET) {
+      const intervalEnd = fundingIntervalEnd(source_timestamp);
+      if (funding.premiumIntervalMs === 0 ||
+        (intervalEnd > funding.premiumIntervalMs &&
+          funding.lastSettledIntervalMs >= funding.premiumIntervalMs)) {
+        funding.premiumIntervalMs = intervalEnd;
+        funding.premiumSum = 0n;
+        funding.premiumSamples = 0;
+      }
+      if (funding.premiumIntervalMs === intervalEnd) {
+        const premium = samplePremium(book, mark_price);
+        if (premium !== null) {
+          funding.premiumSum += premium;
+          funding.premiumSamples += 1;
+          if (funding.premiumSamples % 10 === 0) this.emitFundingState(market_id);
+        }
+      }
+    }
     this.commandEvents?.changedTickers.add(market_id);
     this.emitDbEvent({
       event_type: "MARK_PRICE_UPDATE",

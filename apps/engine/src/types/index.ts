@@ -94,6 +94,14 @@ interface SnapshotMarket {
     max_leverage: string | null;
     max_liquidation_quantity: string | null;
   };
+  funding?: {
+    last_settled_interval_ms: number;
+    fixed_rate: string | null;
+    premium_sum: string;
+    premium_samples: number;
+    premium_interval_ms: number;
+    last_rate: string;
+  };
 }
 
 interface SnapshotPosition {
@@ -167,13 +175,15 @@ type InsuranceFundLedgerEntryType =
   | "LIQUIDATION_FEE"
   | "LIQUIDATION_SURPLUS"
   | "SHORTFALL_COVER"
-  | "UNCOVERED_SHORTFALL";
+  | "UNCOVERED_SHORTFALL"
+  | "FUNDING_SHORTFALL_COVER";
 
 interface InsuranceFundLedgerEntry {
   entry_id: string;
   market_id: string;
   user_id: string;
-  liquidation_order_id: string;
+  liquidation_order_id: string | null;
+  funding_interval_end_ms?: number | null;
   type: InsuranceFundLedgerEntryType;
   amount: bigint;
   balance_after: bigint;
@@ -196,7 +206,7 @@ interface InsuranceFundSettlement {
 }
 
 interface EngineSnapshot {
-  version: 2 | 3 | 4 | 5 | 6;
+  version: 2 | 3 | 4 | 5 | 6 | 7;
   snapshot_time: number;
   scale: number;
   last_applied_stream_id: string;

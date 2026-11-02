@@ -2,14 +2,14 @@ import type { ServerWebSocket } from "bun";
 import jwt, { type JwtPayload } from "jsonwebtoken";
 import RedisHandler from "./redis";
 
-type PublicEventType = "BOOK" | "TRADE" | "TICKER" | "CANDLE";
+type PublicEventType = "BOOK" | "TRADE" | "TICKER" | "CANDLE" | "FUNDING";
 type SocketData = { user_id: string | null };
 
 const redis = new RedisHandler();
 const subscriptions = new Map<ServerWebSocket<SocketData>, Set<string>>();
 
 function isPublicEventType(value: unknown): value is PublicEventType {
-  return value === "BOOK" || value === "TRADE" || value === "TICKER" || value === "CANDLE";
+  return value === "BOOK" || value === "TRADE" || value === "TICKER" || value === "CANDLE" || value === "FUNDING";
 }
 
 function subscriptionKey(type: PublicEventType, market_id: string): string {

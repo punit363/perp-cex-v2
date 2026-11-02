@@ -62,7 +62,7 @@ const SnapshotTradingFeeAccountSchema = z.object({
 
 const EngineSnapshotSchema = z
   .object({
-    version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
+    version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7)]),
     snapshot_time: z.number().int().nonnegative(),
     scale: z.literal(Number(SCALE)),
     last_applied_stream_id: z.string().regex(/^\d+-\d+$/),
@@ -72,6 +72,14 @@ const EngineSnapshotSchema = z
         last_traded_price: SnapshotInteger,
         last_trade_id: z.string(),
         orders: z.array(SnapshotOrderSchema),
+        funding: z.object({
+          last_settled_interval_ms: z.number().int().nonnegative(),
+          fixed_rate: SnapshotInteger.nullable(),
+          premium_sum: SnapshotInteger,
+          premium_samples: z.number().int().nonnegative(),
+          premium_interval_ms: z.number().int().nonnegative(),
+          last_rate: SnapshotInteger,
+        }).optional(),
         risk_config: z.object({
           maintenance_margin_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
           liquidation_fee_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
@@ -179,6 +187,9 @@ const EngineSnapshotSchema = z
           message: "Version 6 market requires risk configuration"
         });
       }
+      if (snapshot.version >= 7 && !market.funding) {
+        context.addIssue({ code: "custom", path: ["markets", marketIndex, "funding"], message: "Version 7 market requires funding state" });
+      }
       if (market.risk_config &&
         BigInt(market.risk_config.maintenance_margin_rate) + BigInt(market.risk_config.liquidation_fee_rate) >= SCALE) {
         context.addIssue({
@@ -241,6 +252,7 @@ const decimalToFixed = z.string().transform((value, context) => {
 });
 
 const RequestToEngineSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("REGISTER_MARKET"), market_id: z.string().min(1), slug: z.string().regex(/^[A-Z0-9]+-[A-Z0-9]+$/) }),
   z.object({ action: z.literal("RETRY_LIQUIDATIONS") }),
   z.object({
     action: z.literal("SET_MARKET_RISK"),
@@ -276,8 +288,17 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("GET_FUNDING_RATE"),
+    market_id: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("SET_FUNDING_RATE"),
     market_id: z.string().min(1),
-    funding_rate: decimalToFixed
+    funding_rate: decimalToFixed.nullable()
+  }),
+  z.object({
+    action: z.literal("SETTLE_FUNDING"),
+    market_id: z.string().min(1),
+    interval_end_ms: z.number().int().positive()
   }),
   z.object({
     action: z.literal("MARK_PRICE_UPDATE"),
