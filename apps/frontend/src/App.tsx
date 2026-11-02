@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { MarketDashboard, wsUrl } from "./MarketDashboard";
 import { BalanceDashboard } from "./BalanceDashboard";
 import { MarketTradePage } from "./MarketTradePage";
-import "./index.css";
+import "./styles.css";
 
 type AuthMode = "signin" | "register";
 type Section = "home" | "markets" | "balances" | "trade";
@@ -166,6 +166,11 @@ export function App() {
     if (session) void loadBalance(session.token);
   }
 
+  function showDeposit() {
+    showBalances();
+    requestAnimationFrame(() => document.getElementById("wallet-add-amount")?.focus());
+  }
+
   function showSignIn() {
     returnToMarket.current = section === "trade" ? marketId : null;
     navigate("home");
@@ -227,51 +232,47 @@ export function App() {
             <BrandMark compact /><span>APEX <span className="brand__muted">EXCHANGE</span></span>
           </button>
           <nav className="nav" aria-label="Main navigation">
-            <button type="button" className={"nav__item" + (section !== "balances" ? " is-active" : "")} onClick={() => navigate("markets")}>Markets</button>
+            <button type="button" className={"nav__item" + (section === "markets" ? " is-active" : "")} onClick={() => navigate("markets")}>Markets</button>
             <button type="button" className={"nav__item" + (section === "balances" ? " is-active" : "")} onClick={showBalances}>Balances</button>
           </nav>
         </div>
         <div className="topbar__right">
+          {session && <div className="topbar__wallet-actions"><button type="button" onClick={showDeposit}>Deposit</button><button type="button" disabled title="Withdrawals are not available yet">Withdraw</button></div>}
           <span className="environment-badge"><span className="environment-badge__dot" /> Simulated trading</span>
           <span className="topbar__divider" />
           {session
-            ? <><div className="topbar__identity"><strong>{session.username}</strong><span>Trading account</span></div><button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Sign Out</button></>
+            ? <><div className="topbar__identity"><strong>{session.username}</strong><span>Trading account</span></div><button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Logout</button></>
             : <button type="button" className="topbar__action" onClick={showSignIn}>Sign In</button>}
         </div>
       </header>
 
       {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : <main className="landing">
         <section className="hero-panel" aria-labelledby="hero-heading">
-          <div className="hero-panel__glow" aria-hidden="true" />
           <div className="hero-panel__inner">
             <div className="hero-brand"><BrandMark /><span>APEX <span className="brand__muted">EXCHANGE</span></span></div>
             <div className="hero-copy">
-              <div className="eyebrow"><span className="eyebrow__line" /> THE PERPETUAL TRADING DESK</div>
-              <h1 id="hero-heading">Trade perpetuals<br />with <em>clarity.</em></h1>
-              <p>A focused home for order placement, live market depth, and position tracking. Start with simulated collateral and explore the exchange as it takes shape.</p>
+              <h1 id="hero-heading">Trade perpetual assets with <em>precision.</em></h1>
+              <p>Explore live market depth, a central limit order book, and position management in one focused trading interface.</p>
               <div className="feature-grid" aria-label="Exchange features">
                 <div className="feature-card">
-                  <span className="feature-card__label">MATCHING MODEL</span>
-                  <strong>Price-time priority</strong>
-                  <span className="feature-card__sub">Limit order book</span>
+                  <span className="feature-card__label">24H TRADE VOLUME</span>
+                  <strong>—</strong>
                 </div>
                 <div className="feature-card">
-                  <span className="feature-card__label">TRADING MODE</span>
-                  <strong className="feature-card__accent">Simulated collateral</strong>
-                  <span className="feature-card__sub">Development environment</span>
+                  <span className="feature-card__label">MATCHING LATENCY</span>
+                  <strong className="feature-card__accent">—</strong>
                 </div>
               </div>
             </div>
-            <div className="hero-footer"><span className="hero-footer__dot" /> Built for the next trade <span className="hero-footer__dash">—</span> APEX Exchange</div>
+            <div className="hero-footer"><span className="hero-footer__dot" /> Matching engine and settlement pipeline</div>
           </div>
         </section>
 
         <section className="access-panel" aria-label="Account access">
-          <div className="access-panel__halo" aria-hidden="true" />
           <div className="account-card" id="account">
             {session ? (
               <>
-                <div className="account-card__eyebrow">ACCOUNT CONNECTED</div>
+                <div className="account-card__eyebrow">Account connected</div>
                 <div className="account-card__icon"><BrandMark compact /></div>
                 <h2>Welcome, {session.username}</h2>
                 <p className="account-card__intro">Your trading account is ready in this session.</p>
@@ -281,15 +282,14 @@ export function App() {
               </>
             ) : (
               <>
-                <div className="account-card__eyebrow">YOUR TRADING WORKSPACE</div>
-                <h2>{mode === "signin" ? "Welcome back" : "Create an account"}</h2>
-                <p className="account-card__intro">{mode === "signin" ? "Sign in to access your trading account." : "Get started with simulated perpetual trading."}</p>
+                <h2>{mode === "signin" ? "Welcome Back" : "Create an account"}</h2>
+                <p className="account-card__intro">{mode === "signin" ? "Sign in to connect your trading interface" : "Register to access the trading interface"}</p>
                 <div className="auth-tabs" role="group" aria-label="Account action">
                   <button type="button" aria-pressed={mode === "signin"} className={mode === "signin" ? "is-active" : ""} onClick={() => { setMode("signin"); setError(""); setMessage(""); }}>Sign In</button>
                   <button type="button" aria-pressed={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => { setMode("register"); setError(""); setMessage(""); }}>Register</button>
                 </div>
                 <form className="auth-form" onSubmit={submitAuth}>
-                  <label htmlFor="username">USERNAME</label>
+                  <label htmlFor="username">EMAIL OR USER ID</label>
                   <input ref={usernameInput} id="username" name="username" type="text" autoComplete="username" placeholder="Enter your username" value={username} onChange={(event) => setUsername(event.target.value)} required />
                   <label htmlFor="password">PASSWORD</label>
                   <div className="password-field">
@@ -298,7 +298,7 @@ export function App() {
                   </div>
                   {error && <p className="form-message form-message--error" role="alert">{error}</p>}
                   {message && <p className="form-message form-message--success" role="status">{message}</p>}
-                  <button className="primary-button" type="submit" disabled={busy}>{busy ? "Connecting…" : mode === "signin" ? "Connect Account" : "Create Account"}<span aria-hidden="true">↗</span></button>
+                  <button className="primary-button" type="submit" disabled={busy}>{busy ? "Connecting…" : mode === "signin" ? "Connect Account" : "Create Account"}</button>
                 </form>
                 <p className="account-card__footnote">Simulated trading environment</p>
               </>

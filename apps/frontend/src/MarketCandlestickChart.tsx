@@ -6,8 +6,8 @@ const choices: { value: CandleInterval; label: string }[] = [
   { value: "all", label: "All" },
   { value: "3m", label: "3m" },
   { value: "1m", label: "1m" },
-  { value: "1d", label: "1d" },
   { value: "1h", label: "1h" },
+  { value: "1d", label: "1d" },
 ];
 
 function sameCandle(a: CandlestickData<UTCTimestamp>, b: CandlestickData<UTCTimestamp>) {
@@ -69,12 +69,12 @@ export function MarketCandlestickChart({ sourceCandles, connected, loading, erro
       <div className="trade-chart__periods" role="group" aria-label="Candle interval">
         {choices.map((choice) => <button key={choice.value} type="button" aria-pressed={interval === choice.value} className={interval === choice.value ? "is-active" : ""} onClick={() => setInterval(choice.value)}>{choice.label}</button>)}
       </div>
-      <span className={`trade-live-pill ${connected ? "" : "is-offline"}`}><i /> {connected ? "LIVE TRADES" : "AWAITING FEED"}</span>
+      <span className={`trade-live-pill ${connected ? "" : "is-offline"}`}><i /> {connected ? "Live trades" : "Awaiting feed"}</span>
     </div>
     <div className="trade-chart__plot">
       <div ref={container} className="trade-chart__canvas" />
       {!candles.length && <div className="trade-chart__empty"><span className="trade-chart__empty-icon">⌁</span><strong>{loading ? "Loading trade history" : "No trades yet"}</strong><span>{error || "Candles appear when orders match in this market."}</span></div>}
     </div>
-    <div className="trade-chart__footer"><span>TRADE PRICE · {interval === "all" ? "ALL HISTORY" : `${interval.toUpperCase()} CANDLES`}</span><span>{candles.length} candle{candles.length === 1 ? "" : "s"}</span></div>
+    <div className="trade-chart__footer"><span>Trade price · {interval === "all" ? "All history" : `${interval} candles`}</span><span>{candles.length} candle{candles.length === 1 ? "" : "s"}</span></div>
   </section>;
 }

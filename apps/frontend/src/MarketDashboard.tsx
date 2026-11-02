@@ -68,9 +68,26 @@ export function formatScaled(value: string) {
   }
 }
 
+function portfolioValue(balance: Balance) {
+  const scaled = (value: string) => {
+    const match = /^(-?\d+)(?:\.(\d{1,8}))?$/.exec(value);
+    if (!match) return null;
+    const fraction = BigInt((match[2] || "").padEnd(8, "0") || "0");
+    return BigInt(match[1]!) * 100_000_000n + (value.startsWith("-") ? -fraction : fraction);
+  };
+  const available = scaled(balance.available);
+  const reserved = scaled(balance.reserved);
+  if (available === null || reserved === null) return "—";
+  const total = available + reserved;
+  const absolute = total < 0n ? -total : total;
+  const whole = (absolute / 100_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = (absolute % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
+  return `${total < 0n ? "−" : ""}$${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
 function Sparkline({ values }: { values: number[] }) {
   if (values.length < 2) {
-    return <div className="market-card__chart market-card__chart--empty"><span>LIVE HISTORY PENDING</span></div>;
+    return <div className="market-card__chart market-card__chart--empty"><span>Price history pending</span></div>;
   }
   const minimum = Math.min(...values);
   const span = Math.max(...values) - minimum || 1;
@@ -89,7 +106,7 @@ function MarketCard({ market, live, history, onSelect }: { market: MarketCardDat
   const price = live?.mark_price ?? live?.last_traded_price
     ?? (market.mark_price ? formatScaled(market.mark_price) : null)
     ?? (market.last_traded_price ? formatScaled(market.last_traded_price) : null);
-  const source = live?.mark_price || market.mark_price ? "MARK PRICE" : "LAST TRADE";
+  const source = live?.mark_price || market.mark_price ? "Mark price" : "Last trade";
   return (
     <button type="button" className="market-card" onClick={onSelect} aria-label={`Open ${market.base} ${market.quote} market`}>
       <div className="market-card__top">
@@ -97,7 +114,7 @@ function MarketCard({ market, live, history, onSelect }: { market: MarketCardDat
         <img src={icons[market.base] || market.imageUrl || usdIcon} alt="" width="36" height="36" />
       </div>
       <div className="market-card__price">{price ? <>{price}<small>{market.quote === "PERP" ? "USD" : market.quote}</small></> : "—"}</div>
-      <span className={`market-card__badge ${price ? "has-price" : ""}`}>{market.trading_halted ? "TRADING HALTED" : price ? source : market.preview ? "PREVIEW PAIR" : "AWAITING PRICE"}</span>
+      <span className={`market-card__badge ${price ? "has-price" : ""}`}>{market.trading_halted ? "Trading halted" : price ? source : market.preview ? "Preview pair" : "Awaiting price"}</span>
       <Sparkline values={history} />
     </button>
   );
@@ -200,13 +217,13 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
       <div className="markets-page__inner">
         <div className="overview-grid">
           <section className="overview-card overview-card--balance" aria-label="Account collateral">
-            <span className="overview-card__label">{signedIn ? "AVAILABLE COLLATERAL" : "YOUR TRADING ACCOUNT"}</span>
-            <strong className="overview-card__value">{signedIn ? balanceLoading ? "Loading…" : balance ? `$${balance.available}` : "—" : "Ready when you are"}</strong>
-            <p>{signedIn ? balance ? `Reserved collateral: $${balance.reserved}` : "Open balances to view your collateral." : "Sign in to view your collateral and trading activity."}</p>
-            <button type="button" onClick={signedIn ? onBalances : onSignIn}>{signedIn ? "Manage wallet balance" : "Connect account"} <span aria-hidden="true">↗</span></button>
+            <span className="overview-card__label">MASTER PORTFOLIO VALUE</span>
+            <strong className="overview-card__value">{signedIn ? balanceLoading ? "Loading…" : balance ? portfolioValue(balance) : "—" : "Ready when you are"}</strong>
+            <p>{signedIn ? balance ? `Available collateral · Reserved $${balance.reserved}` : "Open balances to view your collateral." : "Sign in to view your collateral and trading activity."}</p>
+            <button type="button" onClick={signedIn ? onBalances : onSignIn}>{signedIn ? "Manage wallet balance" : "Connect account"}</button>
           </section>
           <section className="overview-card overview-card--status" aria-label="Market connection">
-            <span className="overview-card__label">MARKET CONNECTION</span>
+            <span className="overview-card__label">ENGINE DIAGNOSTICS</span>
             <div className="overview-card__stats">
               <div><strong>{loading ? "—" : markets.length}</strong><span>Listed markets</span></div>
               <div><strong>{liveQuoteCount}</strong><span>Live quotes received</span></div>
@@ -216,13 +233,14 @@ export function MarketDashboard({ balance, balanceLoading, signedIn, onBalances,
         </div>
 
         <div className="markets-heading">
-          <div><h1>Markets</h1><p>{preview ? "Browse the layout while live market listings are unavailable." : "Explore listed perpetual markets and live prices."}</p></div>
+          <div><h1>Market Perpetual Pairs</h1><p>Browse markets grouped by quote asset</p></div>
           <button type="button" onClick={() => setRefreshKey((key) => key + 1)} disabled={loading} aria-label="Refresh markets" title="Refresh markets"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.2-5.5M20 4v5h-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
         </div>
+
         {preview && !loading && <p className="market-preview-note" role="status">{loadError ? "The market service could not be reached. Showing preview pairs with no price data." : "No markets are listed yet. Showing preview pairs with no price data."}</p>}
         {groups.map((quote) => (
           <section className="market-group" key={quote} aria-label={`${quote} markets`}>
-            <div className="market-group__heading"><img src={icons[quote] || usdIcon} alt="" width="30" height="30" /><h2>{quote} MARKETS</h2><span>{cards.filter((market) => market.quote === quote).length} PAIRS</span></div>
+            <div className="market-group__heading"><img src={icons[quote] || usdIcon} alt="" width="30" height="30" /><h2>{quote} MARKETS HUB</h2><span>{cards.filter((market) => market.quote === quote).length} pairs</span></div>
             <div className="market-grid">{cards.filter((market) => market.quote === quote).map((market) => <MarketCard key={market.market_id} market={market} live={quotes[market.market_id]} history={history[market.market_id] ?? []} onSelect={() => onSelectMarket(market.market_id)} />)}</div>
           </section>
         ))}

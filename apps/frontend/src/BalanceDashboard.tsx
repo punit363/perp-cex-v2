@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { apiBase } from "./MarketDashboard";
 
 type Balance = { available: string; reserved: string };
@@ -106,7 +106,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
             <div className="wallet-total__light" aria-hidden="true" />
             <div className="wallet-total__rings" aria-hidden="true"><span /><span /><span /></div>
             <div className="wallet-total__content">
-              <div className="wallet-total__label"><span className="wallet-icon wallet-icon--total"><WalletIcon type="total" /></span><span>TOTAL COLLATERAL</span></div>
+              <div className="wallet-total__label"><span className="wallet-icon wallet-icon--total"><WalletIcon type="total" /></span><span>Total collateral</span></div>
               <strong>{loading && username ? "Loading…" : display(total)}</strong>
               <p>{username ? "Available and reserved collateral in your trading account." : "Sign in to sync your account balance with the engine."}</p>
               {username ? <span className="wallet-total__foot"><span className="status-dot is-online" /> Simulated trading balance</span> : <button type="button" className="wallet-total__connect" onClick={onSignIn}>Connect account <span aria-hidden="true">↗</span></button>}
@@ -114,10 +114,14 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
           </section>
 
           <section className="wallet-allocation" aria-label="Collateral allocation">
-            <div className="wallet-allocation__top"><span>COLLATERAL ALLOCATION</span><span>{hasBalance ? "LIVE ACCOUNT VIEW" : "AWAITING ACCOUNT"}</span></div>
+            <div className="wallet-allocation__top"><span>Collateral allocation</span><span>{hasBalance ? "Live account view" : "Awaiting account"}</span></div>
             <div className="wallet-allocation__body">
-              <div className={`wallet-allocation__ring ${total && total > 0n ? "" : "is-empty"}`} style={{ "--reserved-percent": `${reservedPercent}%` } as CSSProperties}>
-                <div><strong>{hasBalance ? `${availablePercent.toFixed(0)}%` : "—"}</strong><span>AVAILABLE</span></div>
+            <div className={`wallet-allocation__ring ${total && total > 0n ? "" : "is-empty"}`}>
+                <svg viewBox="0 0 100 100" aria-hidden="true">
+                  <circle cx="50" cy="50" r="44" fill="none" stroke="#303937" strokeWidth="7" />
+                  {total && total > 0n && <circle cx="50" cy="50" r="44" fill="none" stroke="#59c989" strokeWidth="7" pathLength="100" strokeDasharray={`${availablePercent} ${100 - availablePercent}`} transform="rotate(-90 50 50)" />}
+                </svg>
+                <div><strong>{hasBalance ? `${availablePercent.toFixed(0)}%` : "—"}</strong><span>Available</span></div>
               </div>
               <div className="wallet-allocation__legend">
                 <div><span className="wallet-allocation__dot is-available" /><span>Available</span><strong>{display(available)}</strong></div>
@@ -129,7 +133,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
 
         <section className="wallet-add" aria-labelledby="wallet-add-title">
           <div className="wallet-add__copy">
-            <span className="wallet-explainer__eyebrow">FUND YOUR ACCOUNT</span>
+            <span className="wallet-explainer__eyebrow">Fund your account</span>
             <h2 id="wallet-add-title">Add simulated balance</h2>
             <p>Credit collateral for testing orders and positions. No real funds move.</p>
           </div>
@@ -137,7 +141,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
             <label htmlFor="wallet-add-amount">Amount</label>
             <div className="wallet-add__controls">
               <div className="wallet-add__input"><span aria-hidden="true">$</span><input id="wallet-add-amount" type="text" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={(event) => { setAmount(event.target.value); setAddError(""); setAddSuccess(""); }} disabled={adding} aria-describedby="wallet-add-hint" /></div>
-              <button type="submit" disabled={adding}>{adding ? "ADDING…" : "ADD BALANCE"}</button>
+              <button type="submit" disabled={adding}>{adding ? "Adding…" : "Add balance"}</button>
             </div>
             <span id="wallet-add-hint" className="wallet-add__hint">Positive amount · up to 8 decimal places</span>
             {addError && <p className="wallet-add__error" role="alert">{addError}</p>}
@@ -150,14 +154,14 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
         <div className="wallet-metrics" aria-label="Collateral breakdown">
           <article className="wallet-metric">
             <div className="wallet-metric__top"><span className="wallet-icon wallet-icon--available"><WalletIcon type="available" /></span><span>01 / 02</span></div>
-            <span className="wallet-metric__label">AVAILABLE COLLATERAL</span>
+            <span className="wallet-metric__label">Available collateral</span>
             <strong>{loading && username ? "Loading…" : display(available)}</strong>
             <p>Funds available for new orders and margin.</p>
             <div className="wallet-metric__line wallet-metric__line--available" />
           </article>
           <article className="wallet-metric">
             <div className="wallet-metric__top"><span className="wallet-icon wallet-icon--reserved"><WalletIcon type="reserved" /></span><span>02 / 02</span></div>
-            <span className="wallet-metric__label">RESERVED COLLATERAL</span>
+            <span className="wallet-metric__label">Reserved collateral</span>
             <strong>{loading && username ? "Loading…" : display(reserved)}</strong>
             <p>Funds set aside for open orders and positions.</p>
             <div className="wallet-metric__line wallet-metric__line--reserved" />
@@ -165,7 +169,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
         </div>
 
         <section className="wallet-explainer" aria-label="Understanding your balance">
-          <div><span className="wallet-explainer__eyebrow">A SIMPLE BREAKDOWN</span><h2>Where your collateral goes</h2><p>Placing an order moves required margin from available to reserved. As your orders and positions change, these balances change with them.</p></div>
+          <div><span className="wallet-explainer__eyebrow">A simple breakdown</span><h2>Where your collateral goes</h2><p>Placing an order moves required margin from available to reserved. As your orders and positions change, these balances change with them.</p></div>
           <div className="wallet-explainer__flow"><span>Available</span><i aria-hidden="true">→</i><span>Reserved for trading</span><i aria-hidden="true">→</i><span>Released or settled</span></div>
         </section>
       </div>
