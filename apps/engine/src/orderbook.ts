@@ -353,6 +353,9 @@ class Orderbook {
           node.quantity - node.filled
         );
         if (fill_qty > 0n) {
+          if (node.user_id === order.user_id) {
+            throw new Error("Order would match your own resting order");
+          }
           fills.push({ price, quantity: fill_qty });
           remaining_qty -= fill_qty;
           if (order.type === OrderType.MARKET && order.side === OrderSide.BUY) {
@@ -698,6 +701,8 @@ class Orderbook {
         "Filled cannot exceed or be eqaual to Quanitity while insertion"
       );
     }
+    // Reject the whole incoming order before mutating the book or balances.
+    this.previewOrder(order);
     if (order.side == "BUY") {
       return this.processBuyOrder(order);
     } else if (order.side == "SELL") {

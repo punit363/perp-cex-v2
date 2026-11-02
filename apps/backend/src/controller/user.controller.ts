@@ -18,9 +18,7 @@ async function on_ramp(req: Request, res: Response) {
 
     if (!engine_response.status) {
       return res.status(400).json(
-        handleResponse(engine_response.message, 0, {
-          engine_response,
-        })
+        handleError(engine_response.message, 0)
       );
     }
 
@@ -50,9 +48,7 @@ async function get_balance(req: Request, res: Response) {
 
     if (!engine_response.status) {
       return res.status(400).json(
-        handleResponse(engine_response.message, 0, {
-          engine_response,
-        })
+        handleError(engine_response.message, 0)
       );
     }
 

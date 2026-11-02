@@ -28,6 +28,10 @@ async function signup(req: Request, res: Response): Promise<void> {
     );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
+      res.status(400).send(handleError("User already exists", 0));
+      return;
+    }
     res
       .status((error as { status_code?: number })?.status_code || 500)
       .send(handleError(err.message, 0));

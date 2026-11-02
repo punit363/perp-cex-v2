@@ -8,7 +8,7 @@ import { projectEngineEvent } from "./project-event";
 const redis = new RedisHandler();
 
 async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
-  if (event.event_type === "MARK_PRICE_UPDATE" || event.event_type === "MARKET_RISK_UPDATE") return;
+  if (event.event_type === "MARK_PRICE_UPDATE" || event.event_type === "MARKET_RISK_UPDATE" || event.event_type === "FUNDING_CONFIG_UPDATE") return;
 
   const orderIds = new Set([
     ...event.changes.orders.map((order) => order.order_id),
@@ -29,10 +29,14 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
   ]);
 
   for (const user_id of userIds) {
-    const balance = event.changes.balances.find(
+    const balance = [...event.changes.balances].reverse().find(
       (candidate) => candidate.user_id === user_id
     );
-    const positions = event.changes.positions
+    const latestPositionChanges = new Map<string, typeof event.changes.positions[number]>();
+    for (const change of event.changes.positions) {
+      if (change.user_id === user_id) latestPositionChanges.set(change.market_id, change);
+    }
+    const positions = [...latestPositionChanges.values()]
       .filter(
         (
           change
@@ -91,10 +95,8 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
             updated_at: order.updated_at.toISOString()
           })),
         positions,
-        closed_position_markets: event.changes.positions
-          .filter(
-            (change) => change.user_id === user_id && change.position === null
-          )
+        closed_position_markets: [...latestPositionChanges.values()]
+          .filter((change) => change.position === null)
           .map((change) => change.market_id)
       }
     });

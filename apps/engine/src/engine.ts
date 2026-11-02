@@ -1566,7 +1566,36 @@ class Engine {
           trading_fee_account: trading_fee_change,
         },
       });
+      const eventsBeforeRetry = this.commandEvents?.db.length ?? 0;
       this.retryActiveLiquidations(market_id);
+
+      // A newly resting order may be consumed by a liquidation in the same
+      // command. Include those maker fills in the placement response.
+      const retryFills = (this.commandEvents?.db.slice(eventsBeforeRetry) ?? [])
+        .flatMap((event) => event.changes.fills ?? [])
+        .filter((fill) => fill.maker_order_id === result.order.order_id);
+      if (retryFills.length) {
+        const finalFilled = result.order.filled + retryFills.reduce(
+          (sum, fill) => sum + BigInt(fill.filled), 0n,
+        );
+        const lastFill = retryFills[retryFills.length - 1]!;
+        response.order.filled = formatFixed(finalFilled);
+        response.order.status = lastFill.maker_order_status;
+        response.order.rem_qty = formatFixed(quantity - finalFilled);
+        response.order.remaining_order_fee = formatFixed(BigInt(lastFill.maker_order_fee_remaining));
+        response.fills.push(...retryFills.map((fill) => ({
+          trade_id: fill.trade_id,
+          maker_order_id: fill.maker_order_id,
+          maker_user_id: fill.maker_user_id,
+          taker_order_id: fill.taker_order_id,
+          taker_user_id: fill.taker_user_id,
+          maker_order_status: fill.maker_order_status,
+          price: formatFixed(BigInt(fill.price)),
+          filled: formatFixed(BigInt(fill.filled)),
+          maker_fee: formatFixed(BigInt(fill.maker_order_fee_consumed)),
+          taker_fee: formatFixed(BigInt(fill.taker_fee)),
+        })));
+      }
 
       return engine_response("Order placed successfully", 1, response);
     } catch (error) {
