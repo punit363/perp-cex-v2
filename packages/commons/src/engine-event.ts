@@ -91,7 +91,11 @@ const MarketDataChangeSchema = z.object({
   maintenance_margin_rate: ScaledIntegerSchema.optional(),
   liquidation_fee_rate: ScaledIntegerSchema.optional(),
   max_leverage: ScaledIntegerSchema.nullable().optional(),
-  max_liquidation_quantity: ScaledIntegerSchema.nullable().optional()
+  max_liquidation_quantity: ScaledIntegerSchema.nullable().optional(),
+  funding_fixed_rate: ScaledIntegerSchema.nullable().optional(),
+  funding_last_rate: ScaledIntegerSchema.optional(),
+  last_funding_ms: z.number().int().nonnegative().optional(),
+  next_funding_ms: z.number().int().positive().optional()
 });
 
 const LiquidationAttemptChangeSchema = z.object({
@@ -128,12 +132,14 @@ const InsuranceFundLedgerEntrySchema = z.object({
   entry_id: IdSchema,
   market_id: IdSchema,
   user_id: IdSchema,
-  liquidation_order_id: IdSchema,
+  liquidation_order_id: IdSchema.nullable(),
+  funding_interval_end_ms: z.number().int().positive().nullable().optional(),
   type: z.enum([
     "LIQUIDATION_FEE",
     "LIQUIDATION_SURPLUS",
     "SHORTFALL_COVER",
-    "UNCOVERED_SHORTFALL"
+    "UNCOVERED_SHORTFALL",
+    "FUNDING_SHORTFALL_COVER"
   ]),
   amount: ScaledIntegerSchema,
   balance_after: ScaledIntegerSchema,
@@ -169,6 +175,30 @@ const TradingFeeAccountChangeSchema = z.object({
   entries: z.array(TradingFeeLedgerEntrySchema)
 });
 
+const FundingIntervalChangeSchema = z.object({
+  market_id: IdSchema,
+  interval_end_ms: z.number().int().positive(),
+  index_price: ScaledIntegerSchema,
+  rate: ScaledIntegerSchema,
+  sample_count: z.number().int().nonnegative(),
+  status: z.enum(["SETTLED", "PARTIAL", "SKIPPED"]),
+  total_paid: ScaledIntegerSchema,
+  insurance_used: ScaledIntegerSchema,
+  uncovered_shortfall: ScaledIntegerSchema,
+});
+
+const FundingPaymentChangeSchema = z.object({
+  market_id: IdSchema,
+  interval_end_ms: z.number().int().positive(),
+  user_id: IdSchema,
+  amount: ScaledIntegerSchema,
+  requested_amount: ScaledIntegerSchema,
+  available_debit: ScaledIntegerSchema,
+  margin_debit: ScaledIntegerSchema,
+  insurance_covered: ScaledIntegerSchema,
+  uncovered_shortfall: ScaledIntegerSchema,
+});
+
 const EventMetadataSchema = z.object({
   source_message_id: IdSchema,
   occurred_at_ms: z.number().int().nonnegative()
@@ -183,6 +213,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     "LIQUIDATION",
     "MARKET_RISK_UPDATE",
     "MARK_PRICE_UPDATE",
+    "FUNDING_CONFIG_UPDATE",
     "FUNDING_SETTLEMENT"
   ]),
   changes: z.object({
@@ -195,7 +226,9 @@ export const DBEventSchema = EventMetadataSchema.extend({
     candles: z.array(CandleChangeSchema).default([]),
     insurance_fund: z.array(InsuranceFundChangeSchema).default([]),
     trading_fee_account: z.array(TradingFeeAccountChangeSchema).default([]),
-    liquidation_attempts: z.array(LiquidationAttemptChangeSchema).default([])
+    liquidation_attempts: z.array(LiquidationAttemptChangeSchema).default([]),
+    funding_intervals: z.array(FundingIntervalChangeSchema).default([]),
+    funding_payments: z.array(FundingPaymentChangeSchema).default([])
   })
 });
 
@@ -236,6 +269,18 @@ const TickerEventSchema = WSMetadataSchema.extend({
   })
 });
 
+const FundingEventSchema = WSMetadataSchema.extend({
+  event_type: z.literal("FUNDING"),
+  data: z.object({
+    market_id: IdSchema,
+    rate: DecimalSchema,
+    ready: z.boolean(),
+    next_funding_ms: z.number().int().positive(),
+    last_settled_ms: z.number().int().nonnegative(),
+    sample_count: z.number().int().nonnegative(),
+  })
+});
+
 const CandleEventSchema = WSMetadataSchema.extend({
   event_type: z.literal("CANDLE"),
   data: z.object({
@@ -255,7 +300,8 @@ export const WSEventSchema = z.discriminatedUnion("event_type", [
   BookEventSchema,
   TradeEventSchema,
   TickerEventSchema,
-  CandleEventSchema
+  CandleEventSchema,
+  FundingEventSchema
 ]);
 
 const PrivateBalanceSchema = z.object({

@@ -1,6 +1,14 @@
 import { prisma } from "..";
 
 export const MarketRepo = {
+  ensureMarket: async (slug: string, imageUrl: string) => {
+    try {
+      return await prisma.market.upsert({ where: { slug }, create: { slug, imageUrl }, update: {} });
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") throw error;
+      return prisma.market.findUniqueOrThrow({ where: { slug } });
+    }
+  },
   listMarkets: async () => {
     return prisma.market.findMany({
       select: {
@@ -14,6 +22,10 @@ export const MarketRepo = {
         liquidation_fee_rate: true,
         max_leverage: true,
         max_liquidation_quantity: true,
+        funding_fixed_rate: true,
+        funding_last_rate: true,
+        last_funding_ms: true,
+        next_funding_ms: true,
       },
       orderBy: { slug: "asc" },
     });
@@ -33,6 +45,10 @@ export const MarketRepo = {
         liquidation_fee_rate: true,
         max_leverage: true,
         max_liquidation_quantity: true,
+        funding_fixed_rate: true,
+        funding_last_rate: true,
+        last_funding_ms: true,
+        next_funding_ms: true,
       },
     });
   },

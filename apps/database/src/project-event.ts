@@ -157,6 +157,31 @@ export async function projectEngineEvent(event: DBEvent) {
       });
     }
 
+    for (const interval of event.changes.funding_intervals) {
+      const inserted = await tx.fundingInterval.createMany({
+        data: [{ market_id: interval.market_id, interval_end_ms: BigInt(interval.interval_end_ms),
+          index_price: BigInt(interval.index_price), rate: BigInt(interval.rate),
+          sample_count: interval.sample_count, status: interval.status,
+          total_paid: BigInt(interval.total_paid), insurance_used: BigInt(interval.insurance_used),
+          uncovered_shortfall: BigInt(interval.uncovered_shortfall) }],
+        skipDuplicates: true,
+      });
+      if (inserted.count !== 1) throw new Error(`Duplicate funding interval ${interval.market_id}:${interval.interval_end_ms}`);
+    }
+    if (event.changes.funding_payments.length) {
+      await tx.fundingPayment.createMany({ data: event.changes.funding_payments.map((payment) => ({
+        market_id: payment.market_id,
+        interval_end_ms: BigInt(payment.interval_end_ms),
+        user_id: payment.user_id,
+        amount: BigInt(payment.amount),
+        requested_amount: BigInt(payment.requested_amount),
+        available_debit: BigInt(payment.available_debit),
+        margin_debit: BigInt(payment.margin_debit),
+        insurance_covered: BigInt(payment.insurance_covered),
+        uncovered_shortfall: BigInt(payment.uncovered_shortfall),
+      })) });
+    }
+
     for (const change of event.changes.insurance_fund) {
       const data = {
         balance: BigInt(change.balance),
@@ -178,6 +203,7 @@ export async function projectEngineEvent(event: DBEvent) {
             market_id: entry.market_id,
             user_id: entry.user_id,
             liquidation_order_id: entry.liquidation_order_id,
+            funding_interval_end_ms: entry.funding_interval_end_ms == null ? null : BigInt(entry.funding_interval_end_ms),
             type: entry.type,
             amount: BigInt(entry.amount),
             balance_after: BigInt(entry.balance_after),
@@ -299,6 +325,12 @@ export async function projectEngineEvent(event: DBEvent) {
           ...(change.max_liquidation_quantity !== undefined && {
             max_liquidation_quantity: change.max_liquidation_quantity === null ? null : BigInt(change.max_liquidation_quantity),
           }),
+          ...(change.funding_fixed_rate !== undefined && {
+            funding_fixed_rate: change.funding_fixed_rate === null ? null : BigInt(change.funding_fixed_rate),
+          }),
+          ...(change.funding_last_rate !== undefined && { funding_last_rate: BigInt(change.funding_last_rate) }),
+          ...(change.last_funding_ms !== undefined && { last_funding_ms: BigInt(change.last_funding_ms) }),
+          ...(change.next_funding_ms !== undefined && { next_funding_ms: BigInt(change.next_funding_ms) }),
         },
       });
     }

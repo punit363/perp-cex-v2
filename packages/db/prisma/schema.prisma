@@ -12,7 +12,7 @@ datasource db {
 
 model User {
   user_id     String     @id @default(uuid())
-  username    String
+  username    String     @unique
   password    String
   orders      Order[]
   positions   Position[]
@@ -59,6 +59,7 @@ enum InsuranceFundEntryType {
   LIQUIDATION_SURPLUS
   SHORTFALL_COVER
   UNCOVERED_SHORTFALL
+  FUNDING_SHORTFALL_COVER
 }
 
 enum TradingFeeRole {
@@ -93,7 +94,7 @@ model Order {
 
 model Market {
   market_id         String   @id @default(uuid())
-  slug              String
+  slug              String   @unique
   imageUrl          String
   mark_price        BigInt?
   last_traded_price BigInt?
@@ -103,6 +104,10 @@ model Market {
   liquidation_fee_rate BigInt?
   max_leverage BigInt?
   max_liquidation_quantity BigInt?
+  funding_fixed_rate BigInt?
+  funding_last_rate BigInt?
+  last_funding_ms BigInt?
+  next_funding_ms BigInt?
   candles           Candle[]
 }
 
@@ -188,6 +193,38 @@ model Position {
   @@id([user_id, market_id])
 }
 
+model FundingInterval {
+  market_id       String
+  interval_end_ms BigInt
+  index_price     BigInt
+  rate            BigInt
+  sample_count    Int
+  status          String
+  total_paid      BigInt
+  insurance_used  BigInt
+  uncovered_shortfall BigInt
+  created_at      DateTime @default(now())
+
+  @@id([market_id, interval_end_ms])
+  @@index([market_id, interval_end_ms(sort: Desc)])
+}
+
+model FundingPayment {
+  market_id       String
+  interval_end_ms BigInt
+  user_id         String
+  amount          BigInt
+  requested_amount BigInt
+  available_debit BigInt
+  margin_debit    BigInt
+  insurance_covered BigInt
+  uncovered_shortfall BigInt
+  created_at      DateTime @default(now())
+
+  @@id([market_id, interval_end_ms, user_id])
+  @@index([user_id, market_id, interval_end_ms(sort: Desc)])
+}
+
 model Liquidation {
   liquidation_id String @id
   user_id String
@@ -257,7 +294,8 @@ model InsuranceFundLedgerEntry {
   collateral_asset     String
   market_id            String
   user_id              String
-  liquidation_order_id String
+  liquidation_order_id String?
+  funding_interval_end_ms BigInt?
   type                 InsuranceFundEntryType
   amount               BigInt
   balance_after        BigInt
