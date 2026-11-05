@@ -5,6 +5,7 @@ import {
   type PrivateAccountEventInput,
 } from "commons/src/engine-event";
 import type { DBEvent } from "./z";
+import CONFIG from "./config";
 
 const STREAM = "engine-events";
 const PRIVATE_STREAM = "private-events";
@@ -12,8 +13,8 @@ const GROUP = "db-projector";
 const CONSUMER = "db-consumer-1";
 
 class RedisHandler {
-  private client: RedisClientType = createClient();
-  private publisher: RedisClientType = createClient();
+  private client: RedisClientType = createClient({ url: CONFIG.redisUrl });
+  private publisher: RedisClientType = createClient({ url: CONFIG.redisUrl });
 
   public async connect(): Promise<void> {
     if (!this.client.isOpen) {
@@ -24,6 +25,7 @@ class RedisHandler {
     }
   }
 
+  //stream candle data to engine-events stream after it has been added to db
   public async publishCandle(candle: {
     source_message_id: string;
     market_id: string;
@@ -47,11 +49,7 @@ class RedisHandler {
     await this.publisher.xAdd(STREAM, "*", { event: JSON.stringify(payload) });
   }
 
-  /**
-   * Private events are written only after the database projector completes the
-   * source engine event. This lets clients use REST for a reconnect snapshot
-   * and these events as authoritative, ordered deltas afterwards.
-   */
+  //stream user data to ws via a private stream
   public async publishPrivateAccountEvent(
     event: PrivateAccountEventInput
   ): Promise<void> {
@@ -71,15 +69,17 @@ class RedisHandler {
     }
   }
 
-  public async readEvents(onEvent: (event: DBEvent) => Promise<void>): Promise<void> {
+  //read data from engine stream to update database
+  public async readEvents(
+    onEvent: (event: DBEvent) => Promise<void>
+  ): Promise<void> {
     await this.connect();
     await this.createGroup();
 
-    // Reprocess this consumer's unacknowledged event after a restart. Fill and
-    // candle writes are idempotent, so a crash between persistence and publish
-    // can safely retry the event and send the current candle to WebSocket clients.
-    let drainingPending = true;
+    let drainingPending = true;// if false --> below loop will start from latest msg not prev
     while (true) {
+      //reads message assigned to this group but were not ack i.e. id:0
+      //reads 1 msg at a time count = 1
       const streams = await this.client.xReadGroup(
         GROUP,
         CONSUMER,
@@ -104,12 +104,15 @@ class RedisHandler {
 
           const parsed = EngineEventSchema.safeParse(payload);
           if (!parsed.success) {
-            throw new Error(`Invalid ${STREAM} entry ${message.id}: ${parsed.error.message}`);
+            throw new Error(
+              `Invalid ${STREAM} entry ${message.id}: ${parsed.error.message}`
+            );
           }
 
           if (parsed.data.destination === "db") {
             await onEvent(parsed.data);
           }
+          //acknowledge incomming data even if it was not for db
           await this.client.xAck(STREAM, GROUP, message.id);
         }
       }

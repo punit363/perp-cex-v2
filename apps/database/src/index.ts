@@ -7,42 +7,63 @@ import { projectEngineEvent } from "./project-event";
 
 const redis = new RedisHandler();
 
-async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
-  if (event.event_type === "MARK_PRICE_UPDATE" || event.event_type === "MARKET_RISK_UPDATE" || event.event_type === "FUNDING_CONFIG_UPDATE") return;
+const publishPrivateAccountUpdates = async (event: DBEvent): Promise<void> => {
+  if (
+    event.event_type === "MARK_PRICE_UPDATE" ||
+    event.event_type === "MARKET_RISK_UPDATE" ||
+    event.event_type === "FUNDING_CONFIG_UPDATE"
+  )
+    return;
 
+  //create a set for all the unique orderids with changes of all types
   const orderIds = new Set([
     ...event.changes.orders.map((order) => order.order_id),
     ...event.changes.order_updates.map((order) => order.order_id),
     ...event.changes.fills.flatMap((fill) => [
       fill.maker_order_id,
-      fill.taker_order_id
-    ])
+      fill.taker_order_id,
+    ]),
   ]);
+
+  //list orders already present in the db
   const persistedOrders = await OrderRepo.listOrdersByIds([...orderIds]);
+
+  //create a set of user_id which were affected from these orders
   const userIds = new Set([
     ...event.changes.balances.map((balance) => balance.user_id),
     ...persistedOrders.map((order) => order.user_id),
     ...event.changes.positions.map((position) => position.user_id),
     ...event.changes.insurance_fund.flatMap((fund) =>
       fund.entries.map((entry) => entry.user_id)
-    )
+    ),
   ]);
 
+  //for each affected user...
   for (const user_id of userIds) {
-    const balance = [...event.changes.balances].reverse().find(
-      (candidate) => candidate.user_id === user_id
-    );
-    const latestPositionChanges = new Map<string, typeof event.changes.positions[number]>();
+    //find whose collateral was affected
+    const balance = [...event.changes.balances]
+      .reverse()
+      .find((candidate) => candidate.user_id === user_id);
+
+    const latestPositionChanges = new Map<
+      string,
+      (typeof event.changes.positions)[number]
+    >();
+
+    //find position changes by market_id
     for (const change of event.changes.positions) {
-      if (change.user_id === user_id) latestPositionChanges.set(change.market_id, change);
+      if (change.user_id === user_id)
+        latestPositionChanges.set(change.market_id, change);
     }
+
+    //filter out if any null positions + convert string to bigint
     const positions = [...latestPositionChanges.values()]
       .filter(
         (
           change
         ): change is typeof change & {
           position: NonNullable<typeof change.position>;
-        } => change.user_id === user_id && change.position !== null
+        } => change.position !== null
       )
       .map((change) => ({
         market_id: change.market_id,
@@ -64,6 +85,7 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
         liquidation_id: change.position.liquidation_id,
       }));
 
+    //publish balance/order/position/closed-positions data
     await redis.publishPrivateAccountEvent({
       source_message_id: event.source_message_id,
       occurred_at_ms: Date.now(),
@@ -74,8 +96,8 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
         ...(balance && {
           balance: {
             available: formatScaledInteger(BigInt(balance.available)),
-            reserved: formatScaledInteger(BigInt(balance.reserved))
-          }
+            reserved: formatScaledInteger(BigInt(balance.reserved)),
+          },
         }),
         orders: persistedOrders
           .filter((order) => order.user_id === user_id)
@@ -92,23 +114,26 @@ async function publishPrivateAccountUpdates(event: DBEvent): Promise<void> {
             initial_fee: formatScaledInteger(order.initial_fee),
             remaining_order_fee: formatScaledInteger(order.remaining_order_fee),
             created_at: order.created_at.toISOString(),
-            updated_at: order.updated_at.toISOString()
+            updated_at: order.updated_at.toISOString(),
           })),
         positions,
         closed_position_markets: [...latestPositionChanges.values()]
           .filter((change) => change.position === null)
-          .map((change) => change.market_id)
-      }
+          .map((change) => change.market_id),
+      },
     });
   }
-}
+};
 
+//loop on the incomming db events
 let retryDelayMs = 1000;
 while (true) {
   try {
     await redis.readEvents(async (event) => {
+      //handle public events first/update db
       const persistedCandles = await projectEngineEvent(event);
       for (const candle of persistedCandles) {
+        //publish candlestick data
         await redis.publishCandle({
           source_message_id: event.source_message_id,
           market_id: candle.market_id,
@@ -119,9 +144,10 @@ while (true) {
           close: formatScaledInteger(candle.close),
           base_volume: formatScaledInteger(candle.base_volume),
           quote_volume: formatScaledInteger(candle.quote_volume),
-          trade_count: candle.trade_count
+          trade_count: candle.trade_count,
         });
       }
+      //handle private events
       await publishPrivateAccountUpdates(event);
       retryDelayMs = 1000;
     });
