@@ -44,9 +44,9 @@ export const previewPairs = [
   "ETH-USDT", "FIL-USDT", "LINK-USDT", "LTC-USDT", "OP-USDT",
   "UNI-USDT", "USDC-USDT", "XRP-USDT",
 ];
-const local = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-export const apiBase = local ? "http://localhost:8000/api/v1" : "/api/v1";
-export const wsUrl = local
+const localDevServer = (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.port === "3000";
+export const apiBase = localDevServer ? "http://localhost:8000/api/v1" : "/api/v1";
+export const wsUrl = localDevServer
   ? `ws://${location.hostname}:7001`
   : `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`;
 

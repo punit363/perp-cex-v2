@@ -31,7 +31,7 @@ function marketIdFromPath(pathname: string) {
 }
 
 const API_BASE =
-  location.hostname === "localhost" || location.hostname === "127.0.0.1"
+  (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.port === "3000"
     ? "http://localhost:8000/api/v1"
     : "/api/v1";
 
