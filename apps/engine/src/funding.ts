@@ -1,63 +1,31 @@
-import { divideRounded, multiplyFixed, parseFixed, SCALE } from "./math/fixed-point";
+import { divideRounded, multiplyFixed } from "./math/fixed-point";
+import { FIXED_POINT_CONSTANTS, FUNDING_CONSTANTS } from "./constants";
 import { calculateNotional } from "./math/financial-math";
 import type Orderbook from "./orderbook";
-import type { Position, UserAccount } from "./types";
+import type { FundingBatch, FundingParticipant } from "./types";
 import { PositionType } from "commons/src/order.type";
 
-export const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000;
-export const FUNDING_RATE_CAP = parseFixed("0.005");
-export const FUNDING_IMPACT_NOTIONAL = parseFixed("1000");
-export const MIN_FUNDING_SAMPLES = 30;
-
-export type FundingState = {
-  lastSettledIntervalMs: number;
-  fixedRate: bigint | null;
-  premiumSum: bigint;
-  premiumSamples: number;
-  premiumIntervalMs: number;
-  lastRate: bigint;
+export const fundingIntervalEnd = (timestampMs: number): number => {
+  return (Math.floor(timestampMs / FUNDING_CONSTANTS.INTERVAL_MS) + 1) * FUNDING_CONSTANTS.INTERVAL_MS;
 };
 
-export function fundingIntervalEnd(timestampMs: number): number {
-  return (Math.floor(timestampMs / FUNDING_INTERVAL_MS) + 1) * FUNDING_INTERVAL_MS;
-}
+export const clampFundingRate = (rate: bigint): bigint => {
+  return rate > FUNDING_CONSTANTS.RATE_CAP ? FUNDING_CONSTANTS.RATE_CAP
+    : rate < -FUNDING_CONSTANTS.RATE_CAP ? -FUNDING_CONSTANTS.RATE_CAP : rate;
+};
 
-export function clampFundingRate(rate: bigint): bigint {
-  return rate > FUNDING_RATE_CAP ? FUNDING_RATE_CAP
-    : rate < -FUNDING_RATE_CAP ? -FUNDING_RATE_CAP : rate;
-}
-
-export function samplePremium(orderbook: Orderbook, indexPrice: bigint): bigint | null {
+export const samplePremium = (orderbook: Orderbook, indexPrice: bigint): bigint | null => {
   if (indexPrice <= 0n) return null;
-  const targetQuantity = divideRounded(FUNDING_IMPACT_NOTIONAL * SCALE, indexPrice, "ceil");
+  const targetQuantity = divideRounded(FUNDING_CONSTANTS.IMPACT_NOTIONAL * FIXED_POINT_CONSTANTS.SCALE, indexPrice, "ceil");
   if (targetQuantity === 0n) return null;
   const impact = orderbook.getImpactPrices(targetQuantity);
   if (!impact || impact.bid >= impact.ask) return null;
   const { bid, ask } = impact;
-  return divideRounded((bid + ask - 2n * indexPrice) * SCALE, 2n * indexPrice, "toward-zero");
-}
-
-export type FundingParticipant = { userId: string; account: UserAccount; position: Position };
-export type FundingPayment = {
-  userId: string;
-  amount: bigint;
-  requestedAmount: bigint;
-  availableDebit: bigint;
-  marginDebit: bigint;
-  insuranceCovered: bigint;
-  uncoveredShortfall: bigint;
-};
-
-export type FundingBatch = {
-  payments: FundingPayment[];
-  insuranceUsed: bigint;
-  uncoveredShortfall: bigint;
+  return divideRounded((bid + ask - 2n * indexPrice) * FIXED_POINT_CONSTANTS.SCALE, 2n * indexPrice, "toward-zero");
 };
 
 /** Signed amount is positive for a recipient and negative for a payer. */
-export function calculateFundingPayments(
-  participants: FundingParticipant[], indexPrice: bigint, rate: bigint, insuranceAvailable = 0n,
-): FundingBatch {
+export const calculateFundingPayments = (participants: FundingParticipant[], indexPrice: bigint, rate: bigint, insuranceAvailable = 0n): FundingBatch => {
   if (rate === 0n) return { payments: [], insuranceUsed: 0n, uncoveredShortfall: 0n };
   const payingSide = rate > 0n ? PositionType.LONG : PositionType.SHORT;
   const payers = participants.filter(({ position }) => position.type === payingSide).sort((a, b) => a.userId.localeCompare(b.userId));
@@ -123,4 +91,4 @@ export function calculateFundingPayments(
   return { payments: [...payerPayments, ...receiverPayments].filter((payment) =>
     payment.amount !== 0n || payment.insuranceCovered !== 0n || payment.uncoveredShortfall !== 0n),
     insuranceUsed, uncoveredShortfall };
-}
+};

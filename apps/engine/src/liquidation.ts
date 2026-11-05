@@ -1,6 +1,7 @@
 import { PositionType } from "commons/src/order.type";
 import type { Position } from "./types";
-import { divideRounded, SCALE } from "./math/fixed-point";
+import { divideRounded } from "./math/fixed-point";
+import { FIXED_POINT_CONSTANTS, LIQUIDATION_CONSTANTS } from "./constants";
 import {
   calculateFee,
   calculateMaintenanceMargin,
@@ -9,12 +10,7 @@ import {
 import { calcUnrealisedPnL } from "./perp";
 
 /** Positive funding_accrued is owed to the position; negative is owed by it. */
-export function calculatePositionRisk(
-  position: Position,
-  markPrice: bigint,
-  maintenanceRate: bigint,
-  liquidationFeeRate: bigint,
-) {
+export const calculatePositionRisk = (position: Position, markPrice: bigint, maintenanceRate: bigint, liquidationFeeRate: bigint) => {
   const unrealizedPnl = calcUnrealisedPnL(
     position.type,
     markPrice,
@@ -36,14 +32,9 @@ export function calculatePositionRisk(
     requirement,
     liquidatable: equity <= requirement,
   };
-}
+};
 
-export function calculateLiquidationFill(
-  position: Position,
-  filled: bigint,
-  executionPrice: bigint,
-  liquidationFeeRate: bigint,
-) {
+export const calculateLiquidationFill = (position: Position, filled: bigint, executionPrice: bigint, liquidationFeeRate: bigint) => {
   if (filled <= 0n || filled > position.quantity) {
     throw new Error("Liquidation fill exceeds remaining position quantity");
   }
@@ -75,15 +66,11 @@ export function calculateLiquidationFill(
     requestedFee,
     executionEquity: allocatedMargin + realizedPnl + allocatedFunding,
   };
-}
+};
 
 /** Threshold on the scaled mark-price grid where maintenance plus close fee is met. */
-export function calculateLiquidationPrice(
-  position: Position,
-  maintenanceRate: bigint,
-  liquidationFeeRate: bigint,
-): bigint | null {
-  if (position.quantity <= 0n || maintenanceRate + liquidationFeeRate >= SCALE) {
+export const calculateLiquidationPrice = (position: Position, maintenanceRate: bigint, liquidationFeeRate: bigint): bigint | null => {
+  if (position.quantity <= 0n || maintenanceRate + liquidationFeeRate >= FIXED_POINT_CONSTANTS.SCALE) {
     return null;
   }
   const liquidatable = (price: bigint) => calculatePositionRisk(
@@ -97,7 +84,7 @@ export function calculateLiquidationPrice(
     if (!liquidatable(minimumPrice)) return null;
     let low = minimumPrice;
     let high = position.avg_entry_price > 0n ? position.avg_entry_price * 2n : 2n;
-    for (let i = 0; i < 128 && liquidatable(high); i++) high *= 2n;
+    for (let i = 0; i < LIQUIDATION_CONSTANTS.PRICE_SEARCH_MAX_DOUBLINGS && liquidatable(high); i++) high *= 2n;
     if (liquidatable(high)) return null;
     while (high - low > 1n) {
       const middle = (low + high) / 2n;
@@ -110,7 +97,7 @@ export function calculateLiquidationPrice(
   if (liquidatable(minimumPrice)) return minimumPrice;
   let low = minimumPrice;
   let high = position.avg_entry_price > 0n ? position.avg_entry_price * 2n : 2n;
-  for (let i = 0; i < 128 && !liquidatable(high); i++) high *= 2n;
+  for (let i = 0; i < LIQUIDATION_CONSTANTS.PRICE_SEARCH_MAX_DOUBLINGS && !liquidatable(high); i++) high *= 2n;
   if (!liquidatable(high)) return null;
   while (high - low > 1n) {
     const middle = (low + high) / 2n;
@@ -118,4 +105,4 @@ export function calculateLiquidationPrice(
     else low = middle;
   }
   return high;
-}
+};

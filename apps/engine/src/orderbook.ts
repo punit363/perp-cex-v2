@@ -6,18 +6,28 @@ import type {
   PriceLevel,
   RestingOrder,
   SnapshotMarket,
-  SnapshotOrder
+  SnapshotOrder,
 } from "./types";
-import { divideFixed, divideRounded, formatFixed, multiplyFixed, SCALE } from "./math/fixed-point";
+import {
+  divideFixed,
+  divideRounded,
+  formatFixed,
+  multiplyFixed,
+} from "./math/fixed-point";
+import { FIXED_POINT_CONSTANTS } from "./constants";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import {
   calculateFee,
   calculateInitialMargin,
-  calculateNotional
+  calculateNotional,
 } from "./math/financial-math";
 
 class Orderbook {
+  private comparePrice = (a: bigint, b: bigint) => {
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
+
   private asks = new BTree<bigint, PriceLevel>(undefined, this.comparePrice);
   private bids = new BTree<bigint, PriceLevel>(undefined, this.comparePrice);
   private orders = new Map<string, OrderNode>();
@@ -41,31 +51,27 @@ class Orderbook {
         filled: BigInt(order.filled),
         leverage: BigInt(order.leverage),
         side: order.side,
-        price: BigInt(order.price)
+        price: BigInt(order.price),
       };
       this.insertOrder(order_node);
     });
   }
 
-  private comparePrice(a: bigint, b: bigint) {
-    return a < b ? -1 : a > b ? 1 : 0;
-  }
-
-  private remainingOrderMargin(node: OrderNode): bigint {
+  private remainingOrderMargin = (node: OrderNode): bigint => {
     return calculateInitialMargin(
       calculateNotional(node.level.price, node.quantity - node.filled),
       node.leverage
     );
-  }
+  };
 
-  private remainingOrderFee(node: OrderNode): bigint {
+  private remainingOrderFee = (node: OrderNode): bigint => {
     return calculateFee(
       calculateNotional(node.level.price, node.quantity - node.filled),
       this.makerFeeRate
     );
-  }
+  };
 
-  private updateMarketData(fills: Fill[]) {
+  private updateMarketData = (fills: Fill[]) => {
     if (fills.length > 0) {
       const lastFill = fills[fills.length - 1];
       if (lastFill) {
@@ -73,49 +79,63 @@ class Orderbook {
         this.lastTradedPrice = lastFill.price;
       }
     }
-  }
+  };
 
-  public fetchMarketData() {
+  public fetchMarketData = () => {
     return {
       last_trade_id: this.lastTradeId,
-      last_traded_price: this.lastTradedPrice
+      last_traded_price: this.lastTradedPrice,
     };
-  }
+  };
 
-  public getBestPrices() {
+  public getBestPrices = () => {
     const bid = this.bids.nextLowerPair(undefined)?.[0];
     const ask = this.asks.nextHigherPair(undefined)?.[0];
     return {
       ...(bid !== undefined && { best_bid: formatFixed(bid) }),
-      ...(ask !== undefined && { best_ask: formatFixed(ask) })
+      ...(ask !== undefined && { best_ask: formatFixed(ask) }),
     };
-  }
+  };
+
+  public getBestOppositePrice = (side: OrderSide): bigint | undefined =>
+    side === OrderSide.BUY ? this.asks.minKey() : this.bids.maxKey();
+
+  public getRestingOrderCount = (): number => this.orders.size;
 
   /** Walk only enough levels to price the requested impact quantity. */
-  public getImpactPrices(targetQuantity: bigint): { bid: bigint; ask: bigint } | null {
+  public getImpactPrices = (
+    targetQuantity: bigint
+  ): { bid: bigint; ask: bigint } | null => {
     const average = (levels: Iterable<[bigint, PriceLevel]>): bigint | null => {
       let remaining = targetQuantity;
       let total = 0n;
       for (const [price, level] of levels) {
-        const filled = level.remaining_qty < remaining ? level.remaining_qty : remaining;
+        const filled =
+          level.remaining_qty < remaining ? level.remaining_qty : remaining;
         if (filled <= 0n) continue;
         total += calculateNotional(price, filled);
         remaining -= filled;
         if (remaining === 0n) break;
       }
-      return remaining === 0n ? divideRounded(total * SCALE, targetQuantity, "floor") : null;
+      return remaining === 0n
+        ? divideRounded(
+            total * FIXED_POINT_CONSTANTS.SCALE,
+            targetQuantity,
+            "floor"
+          )
+        : null;
     };
     if (targetQuantity <= 0n) return null;
     const bid = average(this.bids.entriesReversed());
     const ask = average(this.asks.entries());
     return bid === null || ask === null ? null : { bid, ask };
-  }
+  };
 
-  hasOrder(order_id: string): boolean {
+  hasOrder = (order_id: string): boolean => {
     return this.orders.has(order_id);
-  }
+  };
 
-  insertOrder(order: RestingOrder) {
+  insertOrder = (order: RestingOrder) => {
     const price = order.price;
     const quantity = order.quantity;
     const filled = order.filled;
@@ -132,7 +152,7 @@ class Orderbook {
           price: order.price,
           remaining_qty: 0n,
           head: null,
-          tail: null
+          tail: null,
         };
         this.asks.set(price, price_level);
       }
@@ -143,7 +163,7 @@ class Orderbook {
           price: order.price,
           remaining_qty: 0n,
           head: null,
-          tail: null
+          tail: null,
         };
       }
       this.bids.set(price, price_level);
@@ -162,7 +182,7 @@ class Orderbook {
       level: price_level,
       side: order.side,
       prev: null,
-      next: null
+      next: null,
     };
 
     order_node.prev = price_level.tail;
@@ -174,9 +194,9 @@ class Orderbook {
     price_level.tail = order_node;
 
     this.orders.set(order_node.order_id, order_node);
-  }
+  };
 
-  cancelOrder(cancel: { user_id: string; order_id: string }) {
+  cancelOrder = (cancel: { user_id: string; order_id: string }) => {
     const { user_id, order_id } = cancel;
 
     const order = this.orders.get(order_id);
@@ -233,19 +253,19 @@ class Orderbook {
       order_id,
       rem_qty,
       price,
-      leverage: order.leverage
+      leverage: order.leverage,
     };
-  }
+  };
 
-  removeOrder(odr: OrderNode) {
+  removeOrder = (odr: OrderNode) => {
     if (odr.prev) odr.prev.next = odr.next;
     if (odr.next) odr.next.prev = odr.prev;
     if (odr.level.head == odr) odr.level.head = odr.next;
     if (odr.level.tail == odr) odr.level.tail = odr.prev;
     this.orders.delete(odr.order_id);
-  }
+  };
 
-  getDepth() {
+  getDepth = () => {
     let asks: {
       price: string;
       quantity: string;
@@ -258,26 +278,26 @@ class Orderbook {
     for (const [price, level] of this.asks.entries()) {
       asks.push({
         price: formatFixed(price),
-        quantity: formatFixed(level.remaining_qty)
+        quantity: formatFixed(level.remaining_qty),
       });
     }
 
     for (const [price, level] of this.bids.entriesReversed()) {
       bids.push({
         price: formatFixed(price),
-        quantity: formatFixed(level.remaining_qty)
+        quantity: formatFixed(level.remaining_qty),
       });
     }
 
     let depth = {
       asks,
-      bids
+      bids,
     };
 
     return depth;
-  }
+  };
 
-  snapshotOrderbook(): SnapshotOrder[] {
+  snapshotOrderbook = (): SnapshotOrder[] => {
     const orders: SnapshotOrder[] = [];
 
     for (const [price, level] of this.asks.entries()) {
@@ -292,7 +312,7 @@ class Orderbook {
           filled: String(current_node.filled),
           leverage: String(current_node.leverage),
           side: current_node.side,
-          price: String(price)
+          price: String(price),
         };
         orders.push(order_node);
         current_node = current_node.next;
@@ -311,7 +331,7 @@ class Orderbook {
           filled: String(current_node.filled),
           leverage: String(current_node.leverage),
           side: current_node.side,
-          price: String(price)
+          price: String(price),
         };
         orders.push(order_node);
         current_node = current_node.next;
@@ -319,58 +339,11 @@ class Orderbook {
     }
 
     return orders;
-  }
+  };
 
-  recreateOrderbookState() {}
+  recreateOrderbookState = () => {};
 
-  previewOrder(order: Order): { price: bigint; quantity: bigint }[] {
-    const fills: { price: bigint; quantity: bigint }[] = [];
-    let remaining_qty = order.quantity - order.filled;
-    let remaining_amount = order.price;
-    const levels =
-      order.side === OrderSide.BUY
-        ? this.asks.entries()
-        : this.bids.entriesReversed();
-
-    for (const [price, level] of levels) {
-      if (
-        order.type === OrderType.LIMIT &&
-        ((order.side === OrderSide.BUY && price > order.price) ||
-          (order.side === OrderSide.SELL && price < order.price))
-      ) {
-        break;
-      }
-      let node = level.head;
-      while (node && remaining_qty > 0n) {
-        const affordable_qty =
-          order.type === OrderType.MARKET && order.side === OrderSide.BUY
-            ? divideFixed(remaining_amount, price, "floor")
-            : remaining_qty;
-        if (affordable_qty === 0n) return fills;
-
-        const fill_qty = min(
-          min(remaining_qty, affordable_qty),
-          node.quantity - node.filled
-        );
-        if (fill_qty > 0n) {
-          if (node.user_id === order.user_id) {
-            throw new Error("Order would match your own resting order");
-          }
-          fills.push({ price, quantity: fill_qty });
-          remaining_qty -= fill_qty;
-          if (order.type === OrderType.MARKET && order.side === OrderSide.BUY) {
-            remaining_amount -= multiplyFixed(fill_qty, price, "ceil");
-          }
-        }
-        node = node.next;
-      }
-      if (remaining_qty === 0n) break;
-    }
-
-    return fills;
-  }
-
-  processSellOrder(order: Order) {
+  processSellOrder = (order: Order) => {
     const odr_price = order.price;
     const odr_quantity = order.quantity;
     let odr_filled = order.filled;
@@ -423,7 +396,7 @@ class Orderbook {
             maker_order_fee_remaining: this.remainingOrderFee(current_node),
             taker_fee: 0n,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -493,7 +466,7 @@ class Orderbook {
             maker_order_fee_remaining: this.remainingOrderFee(current_node),
             taker_fee: 0n,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -518,13 +491,13 @@ class Orderbook {
         filled: odr_filled,
         status: order.status,
         rem_qty,
-        rem_amt: 0n
+        rem_amt: 0n,
       },
-      fills
+      fills,
     };
-  }
+  };
 
-  processBuyOrder(order: Order) {
+  processBuyOrder = (order: Order) => {
     const odr_price = order.price;
     const odr_quantity = order.quantity;
     let odr_filled = order.filled;
@@ -575,7 +548,7 @@ class Orderbook {
             taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -660,7 +633,7 @@ class Orderbook {
             taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -685,13 +658,13 @@ class Orderbook {
         filled: odr_filled,
         status: order.status,
         rem_amt,
-        rem_qty: 0n
+        rem_qty: 0n,
       },
-      fills
+      fills,
     };
-  }
+  };
 
-  placeOrder(order: Order) {
+  placeOrder = (order: Order) => {
     if (this.orders.has(order.order_id)) {
       throw new Error("This Order ID already exists");
     }
@@ -701,8 +674,6 @@ class Orderbook {
         "Filled cannot exceed or be eqaual to Quanitity while insertion"
       );
     }
-    // Reject the whole incoming order before mutating the book or balances.
-    this.previewOrder(order);
     if (order.side == "BUY") {
       return this.processBuyOrder(order);
     } else if (order.side == "SELL") {
@@ -710,14 +681,14 @@ class Orderbook {
     } else {
       throw new Error("Order can only be placed for buy and sell");
     }
-  }
+  };
 
-  matchToClose(
+  matchToClose = (
     user_id: string,
     order_id: string,
     side: OrderSide,
     quantity: bigint
-  ) {
+  ) => {
     if (quantity <= 0) {
       throw new Error("Quantity must be greater than zero");
     }
@@ -772,7 +743,7 @@ class Orderbook {
             taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -830,7 +801,7 @@ class Orderbook {
             taker_fee: 0n,
             price,
             maker_order_status,
-            filled: fill_qty
+            filled: fill_qty,
           };
           fills.push(fill);
 
@@ -847,9 +818,9 @@ class Orderbook {
       filled,
       net_amt,
       rem_qty: quantity - filled,
-      fills: fills || []
+      fills: fills || [],
     };
-  }
+  };
 }
 
 export default Orderbook;

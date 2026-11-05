@@ -5,7 +5,8 @@ import {
   PositionType
 } from "commons/src/order.type";
 import { PositionState } from "../types";
-import { parseFixed, SCALE } from "../math/fixed-point";
+import { parseFixed } from "../math/fixed-point";
+import { FIXED_POINT_CONSTANTS } from "../constants";
 import z from "zod";
 
 const OrderSideSchema = z.enum(OrderSide);
@@ -64,7 +65,7 @@ const EngineSnapshotSchema = z
   .object({
     version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7)]),
     snapshot_time: z.number().int().nonnegative(),
-    scale: z.literal(Number(SCALE)),
+    scale: z.literal(Number(FIXED_POINT_CONSTANTS.SCALE)),
     last_applied_stream_id: z.string().regex(/^\d+-\d+$/),
     markets: z.array(
       z.object({
@@ -81,8 +82,8 @@ const EngineSnapshotSchema = z
           last_rate: SnapshotInteger,
         }).optional(),
         risk_config: z.object({
-          maintenance_margin_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
-          liquidation_fee_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < SCALE),
+          maintenance_margin_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < FIXED_POINT_CONSTANTS.SCALE),
+          liquidation_fee_rate: SnapshotInteger.refine((value) => BigInt(value) >= 0n && BigInt(value) < FIXED_POINT_CONSTANTS.SCALE),
           max_leverage: SnapshotInteger.refine(isPositiveSnapshotInteger).nullable(),
           max_liquidation_quantity: SnapshotInteger.refine(isPositiveSnapshotInteger).nullable()
         }).optional()
@@ -191,7 +192,7 @@ const EngineSnapshotSchema = z
         context.addIssue({ code: "custom", path: ["markets", marketIndex, "funding"], message: "Version 7 market requires funding state" });
       }
       if (market.risk_config &&
-        BigInt(market.risk_config.maintenance_margin_rate) + BigInt(market.risk_config.liquidation_fee_rate) >= SCALE) {
+        BigInt(market.risk_config.maintenance_margin_rate) + BigInt(market.risk_config.liquidation_fee_rate) >= FIXED_POINT_CONSTANTS.SCALE) {
         context.addIssue({
           code: "custom",
           path: ["markets", marketIndex, "risk_config"],
@@ -323,7 +324,4 @@ const RequestToEngineSchema = z.discriminatedUnion("action", [
   })
 ]);
 
-type EngineCommand = z.output<typeof RequestToEngineSchema>;
-
 export { EngineSnapshotSchema, RequestToEngineSchema };
-export type { EngineCommand };

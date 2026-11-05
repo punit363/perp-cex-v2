@@ -4,13 +4,12 @@ import {
   type EngineEventInput,
 } from "commons/src/engine-event";
 import type { EngineResponse } from "commons/src/index";
-import { RequestToEngineSchema, type EngineCommand } from "./zod/z";
-import type { EngineCommandResult } from "./engine";
+import { RequestToEngineSchema } from "./zod/z";
+import type { EngineCommand, EngineCommandResult } from "./types";
+import RUNTIME_CONFIG from "./config/runtime.config";
+import { REDIS_CONSTANTS } from "./constants";
 
-const EVENT_STREAM = "engine-events";
-const EVENT_GROUPS = ["db-projector", "websocket"] as const;
-
-function compareStreamIds(a: string, b: string): number {
+const compareStreamIds = (a: string, b: string): number => {
   const [aTime, aSequence] = a.split("-");
   const [bTime, bSequence] = b.split("-");
   const aMilliseconds = BigInt(aTime!);
@@ -21,7 +20,7 @@ function compareStreamIds(a: string, b: string): number {
   const aCounter = BigInt(aSequence!);
   const bCounter = BigInt(bSequence!);
   return aCounter < bCounter ? -1 : aCounter > bCounter ? 1 : 0;
-}
+};
 
 class RedisHandler {
   private client: RedisClientType;
@@ -29,16 +28,16 @@ class RedisHandler {
   private eventGroupsInitialized = false;
 
   constructor() {
-    this.publisher = createClient();
-    this.client = createClient();
+    this.publisher = createClient({ url: RUNTIME_CONFIG.redisUrl });
+    this.client = createClient({ url: RUNTIME_CONFIG.redisUrl });
   }
 
-  close(): void {
+  close = (): void => {
     this.client.destroy();
     this.publisher.destroy();
-  }
+  };
 
-  public async connect(): Promise<void> {
+  public connect = async (): Promise<void> => {
     if (!this.client.isOpen) {
       await this.client.connect();
     }
@@ -46,16 +45,21 @@ class RedisHandler {
       await this.publisher.connect();
     }
     await this.createEventGroups();
-  }
+  };
 
-  private async createEventGroups(): Promise<void> {
+  private createEventGroups = async (): Promise<void> => {
     if (this.eventGroupsInitialized) return;
 
-    for (const group of EVENT_GROUPS) {
+    for (const group of REDIS_CONSTANTS.EVENT_GROUPS) {
       try {
-        await this.publisher.xGroupCreate(EVENT_STREAM, group, "0", {
-          MKSTREAM: true,
-        });
+        await this.publisher.xGroupCreate(
+          REDIS_CONSTANTS.EVENT_STREAM,
+          group,
+          REDIS_CONSTANTS.GROUP_START_ID,
+          {
+            MKSTREAM: true,
+          }
+        );
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("BUSYGROUP")) {
           throw error;
@@ -63,29 +67,34 @@ class RedisHandler {
       }
     }
     this.eventGroupsInitialized = true;
-  }
+  };
 
-  public async publishEngineEvent(event: EngineEventInput): Promise<string> {
+  //stream engine events for ws and database
+  public publishEngineEvent = async (
+    event: EngineEventInput
+  ): Promise<string> => {
     const payload = EngineEventSchema.parse(event);
     await this.connect();
-    return this.publisher.xAdd(EVENT_STREAM, "*", {
+    return this.publisher.xAdd(REDIS_CONSTANTS.EVENT_STREAM, "*", {
       event: JSON.stringify(payload),
     });
-  }
+  };
 
-  private async sendBackendResponse(
+  //return response to backend api request
+  private sendBackendResponse = async (
     loopback_id: string,
     engine_response: EngineResponse
-  ) {
-    await this.publisher.xAdd("backend", "*", {
+  ) => {
+    await this.publisher.xAdd(REDIS_CONSTANTS.RESPONSE_STREAM, "*", {
       response: JSON.stringify({
         loopback_id,
         ...engine_response,
       }),
     });
-  }
+  };
 
-  public async readEngineRequestStream(
+  //process request from backend
+  public readEngineRequestStream = async (
     onRequest: (
       request: EngineCommand,
       replayTimestamp: number | undefined,
@@ -93,8 +102,8 @@ class RedisHandler {
     ) => EngineCommandResult,
     initialStreamId: string,
     onApplied: (streamId: string) => void,
-    shouldResumeLiquidations: () => boolean,
-  ) {
+    shouldResumeLiquidations: () => boolean
+  ) => {
     await this.connect();
     let lastAppliedStreamId = initialStreamId;
     const applyMessage = async (
@@ -148,11 +157,11 @@ class RedisHandler {
       if (replay && !Number.isSafeInteger(replayTimestamp)) {
         throw new Error(`Invalid engine stream timestamp at ${message.id}`);
       }
-      const { response: engine_response, dbEvents, wsEvents } = onRequest(
-        parseResult.data,
-        replayTimestamp,
-        message.id
-      );
+      const {
+        response: engine_response,
+        dbEvents,
+        wsEvents,
+      } = onRequest(parseResult.data, replayTimestamp, message.id);
       const occurred_at_ms = replayTimestamp ?? Date.now();
       for (const dbEvent of dbEvents) {
         await this.publishEngineEvent({
@@ -180,10 +189,15 @@ class RedisHandler {
 
     // A stateful engine must replay the retained stream itself, including entries
     // that an older consumer group acknowledged or left pending.
-    const latest = await this.client.xRevRange("engine", "+", "-", {
-      COUNT: 1,
-    });
-    const replayEndId = latest?.[0]?.id ?? "0-0";
+    const latest = await this.client.xRevRange(
+      REDIS_CONSTANTS.REQUEST_STREAM,
+      "+",
+      "-",
+      {
+        COUNT: REDIS_CONSTANTS.LATEST_ENTRY_COUNT,
+      }
+    );
+    const replayEndId = latest?.[0]?.id ?? REDIS_CONSTANTS.INITIAL_STREAM_ID;
     if (compareStreamIds(lastAppliedStreamId, replayEndId) > 0) {
       throw new Error(
         "Engine stream ends before the snapshot cursor; recovery is unsafe"
@@ -192,10 +206,10 @@ class RedisHandler {
 
     while (compareStreamIds(lastAppliedStreamId, replayEndId) < 0) {
       const messages = await this.client.xRange(
-        "engine",
+        REDIS_CONSTANTS.REQUEST_STREAM,
         `(${lastAppliedStreamId}`,
         replayEndId,
-        { COUNT: 100 }
+        { COUNT: REDIS_CONSTANTS.REPLAY_BATCH_SIZE }
       );
       if (!messages?.length) {
         throw new Error(
@@ -208,15 +222,15 @@ class RedisHandler {
     }
 
     if (shouldResumeLiquidations()) {
-      await this.client.xAdd("engine", "*", {
+      await this.client.xAdd(REDIS_CONSTANTS.REQUEST_STREAM, "*", {
         request: JSON.stringify({ action: "RETRY_LIQUIDATIONS" }),
       });
     }
 
     while (true) {
       const request = await this.client.xRead(
-        [{ key: "engine", id: lastAppliedStreamId }],
-        { BLOCK: 0, COUNT: 1 }
+        [{ key: REDIS_CONSTANTS.REQUEST_STREAM, id: lastAppliedStreamId }],
+        { BLOCK: 0, COUNT: REDIS_CONSTANTS.LIVE_BATCH_SIZE }
       );
       if (!request) continue;
       for (const stream of request) {
@@ -225,7 +239,7 @@ class RedisHandler {
         }
       }
     }
-  }
+  };
 }
 
 export default RedisHandler;

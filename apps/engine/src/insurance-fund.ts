@@ -1,17 +1,9 @@
 import type {
   InsuranceFundLedgerEntry,
   InsuranceFundSettlement,
-  SnapshotInsuranceFund
+  SnapshotInsuranceFund,
+  SettlementInput,
 } from "./types";
-
-type SettlementInput = {
-  entry_id_prefix: string;
-  market_id: string;
-  user_id: string;
-  liquidation_order_id: string;
-  execution_equity: bigint;
-  requested_liquidation_fee: bigint;
-};
 
 class InsuranceFund {
   private balance: bigint;
@@ -49,7 +41,7 @@ class InsuranceFund {
       : 0n;
   }
 
-  settleLiquidation(input: SettlementInput): InsuranceFundSettlement {
+  settleLiquidation = (input: SettlementInput): InsuranceFundSettlement => {
     if (input.requested_liquidation_fee < 0n) {
       throw new Error("Liquidation fee cannot be negative");
     }
@@ -125,13 +117,13 @@ class InsuranceFund {
       uncovered_shortfall,
       entries
     };
-  }
+  };
 
-  available(): bigint {
+  available = (): bigint => {
     return this.balance;
-  }
+  };
 
-  coverFundingShortfall(amount: bigint, market_id: string, user_id: string, interval_end_ms: number): SnapshotInsuranceFund & { entries: InsuranceFundLedgerEntry[] } {
+  coverFundingShortfall = (amount: bigint, market_id: string, user_id: string, interval_end_ms: number): SnapshotInsuranceFund & { entries: InsuranceFundLedgerEntry[] } => {
     if (amount < 0n || amount > this.balance) {
       throw new Error("Funding shortfall exceeds insurance fund balance");
     }
@@ -151,9 +143,9 @@ class InsuranceFund {
         uncovered_shortfall: 0n,
       }],
     };
-  }
+  };
 
-  snapshot(): SnapshotInsuranceFund {
+  snapshot = (): SnapshotInsuranceFund => {
     return {
       collateral_asset: this.collateralAsset,
       balance: String(this.balance),
@@ -162,15 +154,9 @@ class InsuranceFund {
       total_shortfall_covered: String(this.totalShortfallCovered),
       total_uncovered_shortfall: String(this.totalUncoveredShortfall)
     };
-  }
+  };
 
-  private createEntry(
-    input: SettlementInput,
-    type: InsuranceFundLedgerEntry["type"],
-    amount: bigint,
-    balance_after: bigint,
-    uncovered_shortfall = 0n
-  ): InsuranceFundLedgerEntry {
+  private createEntry = (input: SettlementInput, type: InsuranceFundLedgerEntry["type"], amount: bigint, balance_after: bigint, uncovered_shortfall = 0n): InsuranceFundLedgerEntry => {
     return {
       entry_id: `${input.entry_id_prefix}:${type}`,
       market_id: input.market_id,
@@ -181,7 +167,7 @@ class InsuranceFund {
       balance_after,
       uncovered_shortfall
     };
-  }
+  };
 }
 
 export default InsuranceFund;

@@ -1,17 +1,8 @@
 import type {
   SnapshotTradingFeeAccount,
-  TradingFeeRole,
-  TradingFeeSettlement
+  TradingFeeSettlement,
+  FeeCharge,
 } from "./types";
-
-type FeeCharge = {
-  trade_id: string;
-  order_id: string;
-  market_id: string;
-  user_id: string;
-  role: TradingFeeRole;
-  amount: bigint;
-};
 
 class TradingFeeAccount {
   private balance: bigint;
@@ -32,7 +23,7 @@ class TradingFeeAccount {
     this.totalTakerFees = snapshot ? BigInt(snapshot.total_taker_fees) : 0n;
   }
 
-  collect(charges: FeeCharge[]): TradingFeeSettlement {
+  collect = (charges: FeeCharge[]): TradingFeeSettlement => {
     const entries = charges
       .filter((charge) => charge.amount > 0n)
       .map((charge) => {
@@ -56,16 +47,16 @@ class TradingFeeAccount {
       total_taker_fees: this.totalTakerFees,
       entries
     };
-  }
+  };
 
-  snapshot(): SnapshotTradingFeeAccount {
+  snapshot = (): SnapshotTradingFeeAccount => {
     return {
       collateral_asset: this.collateralAsset,
       balance: String(this.balance),
       total_maker_fees: String(this.totalMakerFees),
       total_taker_fees: String(this.totalTakerFees)
     };
-  }
+  };
 }
 
 export default TradingFeeAccount;

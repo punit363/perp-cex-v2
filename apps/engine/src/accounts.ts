@@ -6,6 +6,7 @@ import type {
 } from "./types";
 import { PositionState } from "./types";
 
+//stores user details-> collateral/positions/order_ids
 class AccountStore {
   private accounts = new Map<string, UserAccount>();
 
@@ -41,11 +42,11 @@ class AccountStore {
     });
   }
 
-  get(user_id: string): UserAccount | undefined {
+  get = (user_id: string): UserAccount | undefined => {
     return this.accounts.get(user_id);
-  }
+  };
 
-  getOrCreate(user_id: string): UserAccount {
+  getOrCreate = (user_id: string): UserAccount => {
     let account = this.accounts.get(user_id);
     if (!account) {
       account = {
@@ -57,9 +58,10 @@ class AccountStore {
       this.accounts.set(user_id, account);
     }
     return account;
-  }
+  };
 
-  snapshotAccount(): SnapshotAccount[] {
+  //creates a json snapshot of accounts
+  snapshotAccount = (): SnapshotAccount[] => {
     const accounts: SnapshotAccount[] = [];
     this.accounts.forEach((acc) => {
       const user: SnapshotAccount = {
@@ -87,22 +89,22 @@ class AccountStore {
       accounts.push(user);
     });
     return accounts;
-  }
+  };
 
-  credit(user_id: string, amount: bigint): void {
+  credit = (user_id: string, amount: bigint): void => {
     const account = this.getOrCreate(user_id);
     account.collateral.available += amount;
-  }
+  };
 
-  debitMargin(user_id: string, amount: bigint): void {
+  debitMargin = (user_id: string, amount: bigint): void => {
     const account = this.getOrCreate(user_id);
     if (amount < 0n || account.collateral.reserved < amount) {
       throw new Error("Cannot consume more reserved margin than the account holds");
     }
     account.collateral.reserved -= amount;
-  }
+  };
 
-  reserveMargin(user_id: string, amount: bigint): void {
+  reserveMargin = (user_id: string, amount: bigint): void => {
     const account = this.accounts.get(user_id);
     if (!account) {
       throw new Error("User not found");
@@ -113,9 +115,9 @@ class AccountStore {
 
     account.collateral.available -= amount;
     account.collateral.reserved += amount;
-  }
+  };
 
-  releaseMargin(user_id: string, amount: bigint): void {
+  releaseMargin = (user_id: string, amount: bigint): void => {
     const account = this.accounts.get(user_id);
     if (!account) {
       throw new Error("User not found");
@@ -123,7 +125,7 @@ class AccountStore {
 
     account.collateral.available += amount;
     account.collateral.reserved -= amount;
-  }
+  };
 }
 
 export default AccountStore;

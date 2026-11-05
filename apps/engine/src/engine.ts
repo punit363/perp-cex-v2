@@ -1,30 +1,39 @@
+import { divideRounded, formatFixed } from "./math/fixed-point";
 import {
-  divideRounded,
-  formatFixed,
-  multiplyFixed,
-  SCALE,
-} from "./math/fixed-point";
+  ENGINE_CONSTANTS,
+  FIXED_POINT_CONSTANTS,
+  FUNDING_CONSTANTS,
+  MARKET_DATA_CONSTANTS,
+  REDIS_CONSTANTS,
+} from "./constants";
 import {
   PositionState,
   type Position,
   type EngineSnapshot,
   type Fill,
-  type markPriceMetadata,
   type SnapshotMarket,
+  type CandleDraft,
+  type CommandOf,
+  type DBEventDraft,
+  type EngineCommand,
+  type EngineCommandResult,
+  type FundingState,
+  type MarketDefinition,
+  type MarketContext,
+  type MarketRiskConfig,
+  type WSEventDraft,
 } from "./types";
-import { engine_response, generate_liquidation_order_id } from "./utils";
-import type { EngineCommand } from "./zod/z";
+import { engine_response, generate_liquidation_order_id, max } from "./utils";
 import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
 import AccountStore from "./accounts";
 import {
   calculateFee,
   calculateInitialMargin,
-  calculateMaintenanceMargin,
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
-import type { DBEventInput, WSEvent } from "commons/src/engine-event";
+import type { DBEventInput } from "commons/src/engine-event";
 import {
   OrderSide,
   OrderStatus,
@@ -35,74 +44,29 @@ import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
 import InsuranceFund from "./insurance-fund";
 import TradingFeeAccount from "./trading-fee-account";
-import { calculateLiquidationFill, calculateLiquidationPrice, calculatePositionRisk } from "./liquidation";
+import {
+  calculateLiquidationFill,
+  calculateLiquidationPrice,
+  calculatePositionRisk,
+} from "./liquidation";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import RUNTIME_CONFIG from "./config/runtime.config";
 import { randomUUID } from "node:crypto";
 import {
   calculateFundingPayments,
   clampFundingRate,
   fundingIntervalEnd,
-  FUNDING_INTERVAL_MS,
-  MIN_FUNDING_SAMPLES,
   samplePremium,
-  type FundingState,
 } from "./funding";
 
-const SNAPSHOT_PATH = fileURLToPath(
-  new URL("../snapshot.json", import.meta.url)
-);
-
-type CommandOf<Action extends EngineCommand["action"]> = Extract<
-  EngineCommand,
-  { action: Action }
->;
-
-type WSEventDraft<Event extends WSEvent = WSEvent> = Event extends WSEvent
-  ? Pick<Event, "event_type" | "data">
-  : never;
-type DBEventDraft = Pick<DBEventInput, "event_type" | "changes">;
-type CandleDraft = {
-  market_id: string;
-  start_ms: number;
-  open: bigint;
-  high: bigint;
-  low: bigint;
-  close: bigint;
-  base_volume: bigint;
-  quote_volume: bigint;
-  trade_count: number;
-};
-
-type MarketRiskConfig = {
-  maintenanceMarginRate: bigint;
-  liquidationFeeRate: bigint;
-  maxLeverage: bigint | null;
-  maxLiquidationQuantity: bigint | null;
-};
-type MarketDefinition = {
-  market_id: string;
-  slug: string;
-};
-
-export type EngineCommandResult = {
-  response: EngineResponse;
-  dbEvents: DBEventDraft[];
-  wsEvents: WSEventDraft[];
-};
-
 class Engine {
-  private orderbooks: Map<string, Orderbook> = new Map();
+  private markets = new Map<string, MarketContext>();
   private accounts = new AccountStore([]);
-  private markPrices: Map<string, bigint> = new Map();
-  private markPriceMetadata: Map<string, markPriceMetadata> = new Map();
-  private marketRiskConfigs = new Map<string, MarketRiskConfig>();
-  private fundingStates = new Map<string, FundingState>();
-  private marketQuotes = new Map<string, string>();
-  private positionUsersByMarket: Map<string, Set<string>> = new Map(); //market->users>
-  private haltedMarkets = new Set<string>();
-  private liquidationQueue = new Map<string, { user_id: string; market_id: string }>();
-  private processingLiquidations = false;
+  private liquidationQueue = new Map<
+    string,
+    { user_id: string; market_id: string }
+  >(); //pending liquidations in this market
+  private processingLiquidations = false; //flags true everytime there is a pending liquidation
   private readonly MAX_MARK_PRICE_AGE_MS;
   private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS;
   private MAINTENANCE_MARGIN_RATE: bigint;
@@ -111,23 +75,29 @@ class Engine {
   private readonly TAKER_FEE_RATE: bigint;
   private insuranceFund!: InsuranceFund;
   private tradingFeeAccount!: TradingFeeAccount;
-  private lastAppliedStreamId = "0-0";
+  private lastAppliedStreamId: string = REDIS_CONSTANTS.INITIAL_STREAM_ID;
   private replayTimestamp: number | null = null;
   private currentSourceMessageId: string | null = null;
-  private liquidationOrderSequence = 0;
-  private awaitingEventPublication = false;
+  private awaitingEventPublication = false; //block snapshot if pending publication to ws or db
   private snapshotTimer?: ReturnType<typeof setInterval>;
   private commandEvents: {
     db: DBEventDraft[];
     ws: WSEventDraft[];
-    changedBooks: Set<string>;
-    changedTickers: Set<string>;
+    changedBooks: Set<string>; //set of markets which had a change in their orderbooks
+    changedTickers: Set<string>; //set of markets which had a change in their tickerdata
     candles: Map<string, CandleDraft>;
     timestampMs: number;
+    liquidationOrderSequence: number;
   } | null = null;
 
   private constructor(markets: MarketDefinition[]) {
-    for (const market of markets) this.marketQuotes.set(market.market_id, market.slug.split("-").at(-1) ?? "");
+    let restoredSnapshot: EngineSnapshot | undefined;
+    const quotes = new Map(
+      markets.map(({ market_id, slug }) => [
+        market_id,
+        slug.split("-").at(-1) ?? "",
+      ])
+    );
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
     this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
       MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
@@ -136,9 +106,9 @@ class Engine {
     this.MAKER_FEE_RATE = MARKET_CONFIG.MAKER_FEE_RATE;
     this.TAKER_FEE_RATE = MARKET_CONFIG.TAKER_FEE_RATE;
 
-    if (existsSync(SNAPSHOT_PATH)) {
+    if (existsSync(RUNTIME_CONFIG.snapshotPath)) {
       const parsedSnapshot = EngineSnapshotSchema.safeParse(
-        JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"))
+        JSON.parse(readFileSync(RUNTIME_CONFIG.snapshotPath, "utf8"))
       );
       if (!parsedSnapshot.success) {
         const details = parsedSnapshot.error.issues
@@ -147,6 +117,7 @@ class Engine {
         throw new Error(`Cannot restore invalid engine snapshot: ${details}`);
       }
       const snapshot: EngineSnapshot = parsedSnapshot.data;
+      restoredSnapshot = snapshot;
       this.insuranceFund = new InsuranceFund(
         MARKET_CONFIG.COLLATERAL_ASSET,
         MARKET_CONFIG.INSURANCE_FUND_INITIAL_BALANCE,
@@ -157,39 +128,47 @@ class Engine {
         snapshot.trading_fee_account
       );
       this.lastAppliedStreamId = snapshot.last_applied_stream_id;
-      this.haltedMarkets = new Set(snapshot.halted_markets ?? []);
-      snapshot.mark_prices.forEach((mark) => {
-        this.markPrices.set(mark.market_id, BigInt(mark.price));
-        this.markPriceMetadata.set(mark.market_id, {
-          producer_id: mark.producer_id,
-          source_timestamp: mark.source_timestamp,
-          sequence: BigInt(mark.sequence),
-        });
-      });
 
       this.accounts = new AccountStore(snapshot.accounts);
 
       snapshot.markets.forEach((market_data) => {
         const funding = market_data.funding;
-        this.fundingStates.set(market_data.market_id, funding ? {
-          lastSettledIntervalMs: funding.last_settled_interval_ms,
-          fixedRate: funding.fixed_rate === null ? null : BigInt(funding.fixed_rate),
-          premiumSum: BigInt(funding.premium_sum),
-          premiumSamples: funding.premium_samples,
-          premiumIntervalMs: funding.premium_interval_ms,
-          lastRate: BigInt(funding.last_rate),
-        } : this.emptyFundingState());
         const saved = market_data.risk_config;
-        this.marketRiskConfigs.set(market_data.market_id, this.validateRiskConfig({
-          maintenanceMarginRate: saved ? BigInt(saved.maintenance_margin_rate) : this.MAINTENANCE_MARGIN_RATE,
-          liquidationFeeRate: saved ? BigInt(saved.liquidation_fee_rate) : this.LIQUIDATION_FEE_RATE,
-          maxLeverage: saved?.max_leverage ? BigInt(saved.max_leverage) : null,
-          maxLiquidationQuantity: saved?.max_liquidation_quantity ? BigInt(saved.max_liquidation_quantity) : null,
-        }));
-        const orderbook = new Orderbook(market_data, this.MAKER_FEE_RATE);
-        this.orderbooks.set(market_data.market_id, orderbook);
-        this.positionUsersByMarket.set(market_data.market_id, new Set());
-
+        this.markets.set(market_data.market_id, {
+          book: new Orderbook(market_data, this.MAKER_FEE_RATE),
+          quote: quotes.get(market_data.market_id) ?? "",
+          risk: this.validateRiskConfig({
+            maintenanceMarginRate: saved
+              ? BigInt(saved.maintenance_margin_rate)
+              : this.MAINTENANCE_MARGIN_RATE,
+            liquidationFeeRate: saved
+              ? BigInt(saved.liquidation_fee_rate)
+              : this.LIQUIDATION_FEE_RATE,
+            maxLeverage: saved?.max_leverage
+              ? BigInt(saved.max_leverage)
+              : null,
+            maxLiquidationQuantity: saved?.max_liquidation_quantity
+              ? BigInt(saved.max_liquidation_quantity)
+              : null,
+          }),
+          funding: funding
+            ? {
+                lastSettledIntervalMs: funding.last_settled_interval_ms,
+                fixedRate:
+                  funding.fixed_rate === null
+                    ? null
+                    : BigInt(funding.fixed_rate),
+                premiumSum: BigInt(funding.premium_sum),
+                premiumSamples: funding.premium_samples,
+                premiumIntervalMs: funding.premium_interval_ms,
+                lastRate: BigInt(funding.last_rate),
+              }
+            : this.emptyFundingState(),
+          positionUserIds: new Set(),
+          halted: (snapshot.halted_markets ?? []).includes(
+            market_data.market_id
+          ),
+        });
         market_data.orders.forEach((order) => {
           const account = this.accounts.get(order.user_id);
           if (!account) {
@@ -210,19 +189,6 @@ class Engine {
           }
         });
       });
-
-      snapshot.accounts.forEach((account) => {
-        account.positions.forEach((position) => {
-          let positionUsers = this.positionUsersByMarket.get(
-            position.market_id
-          );
-          if (!positionUsers) {
-            positionUsers = new Set<string>();
-            this.positionUsersByMarket.set(position.market_id, positionUsers);
-          }
-          positionUsers.add(account.user_id);
-        });
-      });
     }
 
     if (!this.insuranceFund) {
@@ -239,122 +205,185 @@ class Engine {
 
     for (const market of markets) {
       const { market_id } = market;
-      if (!this.orderbooks.has(market_id)) {
-        this.fundingStates.set(market_id, this.emptyFundingState());
-        // Risk changes are replayed from the engine stream. DB values are a
-        // projection and may be ahead of the snapshot cursor on recovery.
-        this.marketRiskConfigs.set(market_id, this.validateRiskConfig({
-          maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
-          liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
-          maxLeverage: null,
-          maxLiquidationQuantity: null,
-        }));
-        this.orderbooks.set(
-          market_id,
-          new Orderbook(
-            {
-              market_id,
-              last_traded_price: "0",
-              last_trade_id: "",
-              orders: [],
-            },
-            this.MAKER_FEE_RATE
-          )
-        );
-        this.positionUsersByMarket.set(market_id, new Set());
+      const existing = this.markets.get(market_id);
+      if (existing) {
+        existing.quote = quotes.get(market_id) ?? "";
+        continue;
       }
+      // Risk changes are replayed from the engine stream. DB values are a
+      // projection and may be ahead of the snapshot cursor on recovery.
+      this.markets.set(
+        market_id,
+        this.createMarketContext(market_id, quotes.get(market_id) ?? "")
+      );
     }
 
-    if (this.orderbooks.size === 0) {
+    for (const market_id of restoredSnapshot?.halted_markets ?? []) {
+      const context = this.markets.get(market_id);
+      if (context) context.halted = true;
+    }
+
+    restoredSnapshot?.mark_prices.forEach((mark) => {
+      const context = this.markets.get(mark.market_id);
+      if (!context)
+        throw new Error(
+          `Snapshot mark price has unknown market ${mark.market_id}`
+        );
+      context.markPrice = BigInt(mark.price);
+      context.markPriceMetadata = {
+        producer_id: mark.producer_id,
+        source_timestamp: mark.source_timestamp,
+        sequence: BigInt(mark.sequence),
+      };
+    });
+    restoredSnapshot?.accounts.forEach((account) => {
+      account.positions.forEach((position) => {
+        const context = this.markets.get(position.market_id);
+        if (!context)
+          throw new Error(
+            `Snapshot position has unknown market ${position.market_id}`
+          );
+        context.positionUserIds.add(account.user_id);
+      });
+    });
+
+    if (this.markets.size === 0) {
       throw new Error("No markets available to initialize the engine");
     }
     this.captureSnapshot();
   }
 
-  static async create(): Promise<Engine> {
+  static create = async (): Promise<Engine> => {
     const { MarketRepo } = await import("db/repositories/market.repo");
     const markets = await MarketRepo.listMarkets();
     return new Engine(markets);
-  }
+  };
 
-  private validateRiskConfig(config: MarketRiskConfig): MarketRiskConfig {
-    if (config.maintenanceMarginRate < 0n || config.liquidationFeeRate < 0n ||
-      config.maintenanceMarginRate + config.liquidationFeeRate >= SCALE ||
+  private validateRiskConfig = (config: MarketRiskConfig): MarketRiskConfig => {
+    if (
+      config.maintenanceMarginRate < 0n ||
+      config.liquidationFeeRate < 0n ||
+      config.maintenanceMarginRate + config.liquidationFeeRate >=
+        FIXED_POINT_CONSTANTS.SCALE ||
       (config.maxLeverage !== null && config.maxLeverage <= 0n) ||
-      (config.maxLiquidationQuantity !== null && config.maxLiquidationQuantity <= 0n)) {
+      (config.maxLiquidationQuantity !== null &&
+        config.maxLiquidationQuantity <= 0n)
+    ) {
       throw new Error("Invalid market risk configuration");
     }
     return config;
-  }
+  };
 
-  private emptyFundingState(): FundingState {
-    return { lastSettledIntervalMs: 0, fixedRate: null, premiumSum: 0n,
-      premiumSamples: 0, premiumIntervalMs: 0, lastRate: 0n };
-  }
+  private emptyFundingState = (): FundingState => {
+    return {
+      lastSettledIntervalMs: 0,
+      fixedRate: null,
+      premiumSum: 0n,
+      premiumSamples: 0,
+      premiumIntervalMs: 0,
+      lastRate: 0n,
+    };
+  };
 
-  private riskConfig(market_id: string): MarketRiskConfig {
-    return this.marketRiskConfigs?.get(market_id) ?? {
+  private createMarketContext = (
+    market_id: string,
+    quote: string
+  ): MarketContext => ({
+    book: new Orderbook(
+      {
+        market_id,
+        last_traded_price: "0",
+        last_trade_id: "",
+        orders: [],
+      },
+      this.MAKER_FEE_RATE
+    ),
+    quote,
+    risk: this.validateRiskConfig({
       maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
-      liquidationFeeRate: this.LIQUIDATION_FEE_RATE ?? 0n,
+      liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
       maxLeverage: null,
       maxLiquidationQuantity: null,
-    };
-  }
+    }),
+    funding: this.emptyFundingState(),
+    positionUserIds: new Set(),
+    halted: false,
+  });
 
-  getLastAppliedStreamId(): string {
+  private riskConfig = (market_id: string): MarketRiskConfig => {
+    return (
+      this.markets.get(market_id)?.risk ?? {
+        maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
+        liquidationFeeRate: this.LIQUIDATION_FEE_RATE ?? 0n,
+        maxLeverage: null,
+        maxLiquidationQuantity: null,
+      }
+    );
+  };
+
+  getLastAppliedStreamId = (): string => {
     return this.lastAppliedStreamId;
-  }
+  };
 
-  hasActiveLiquidations(): boolean {
-    for (const users of this.positionUsersByMarket.values()) {
-      for (const userId of users) {
+  //check for active liquidation in all markets
+  hasActiveLiquidations = (): boolean => {
+    for (const market of this.markets.values()) {
+      for (const userId of market.positionUserIds) {
         const positions = this.accounts.get(userId)?.positions;
-        if ([...(positions?.values() ?? [])].some(
-          (position) => position.state === PositionState.LIQUIDATING
-        )) return true;
+        if (
+          [...(positions?.values() ?? [])].some(
+            (position) => position.state === PositionState.LIQUIDATING
+          )
+        )
+          return true;
       }
     }
     return false;
-  }
+  };
 
-  recordAppliedStreamId(streamId: string): void {
+  recordAppliedStreamId = (streamId: string): void => {
     this.lastAppliedStreamId = streamId;
     this.awaitingEventPublication = false;
-  }
+  };
 
-  captureSnapshot() {
+  captureSnapshot = () => {
     this.snapshotTimer = setInterval(() => {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
-        version: 7,
+        version: ENGINE_CONSTANTS.SNAPSHOT_VERSION,
         snapshot_time: Date.now(),
-        scale: Number(SCALE),
+        scale: Number(FIXED_POINT_CONSTANTS.SCALE),
         last_applied_stream_id: this.lastAppliedStreamId,
         markets: [],
         accounts: this.accounts.snapshotAccount(),
-        mark_prices: Array.from(
-          this.markPriceMetadata,
-          ([market_id, metadata]) => {
-            const price = this.markPrices.get(market_id);
-            if (price === undefined) {
+        mark_prices: [...this.markets.entries()].flatMap(
+          ([market_id, market]) => {
+            const metadata = market.markPriceMetadata;
+            if (!metadata) return [];
+            if (market.markPrice === undefined) {
               throw new Error(`Missing mark price for market ${market_id}`);
             }
-            return {
-              market_id,
-              price: String(price),
-              producer_id: metadata.producer_id,
-              source_timestamp: metadata.source_timestamp,
-              sequence: String(metadata.sequence),
-            };
+            return [
+              {
+                market_id,
+                price: String(market.markPrice),
+                producer_id: metadata.producer_id,
+                source_timestamp: metadata.source_timestamp,
+                sequence: String(metadata.sequence),
+              },
+            ];
           }
         ),
         insurance_fund: this.insuranceFund.snapshot(),
         trading_fee_account: this.tradingFeeAccount.snapshot(),
-        halted_markets: [...this.haltedMarkets],
+        halted_markets: [...this.markets.entries()]
+          .filter(([, market]) => market.halted)
+          .map(([market_id]) => market_id),
       };
 
-      this.orderbooks.forEach((orderbook, market_id) => {
+      this.markets.forEach((market, market_id) => {
+        const orderbook = market.book;
         const { last_traded_price, last_trade_id } =
           orderbook.fetchMarketData();
 
@@ -364,10 +393,11 @@ class Engine {
           last_trade_id: String(last_trade_id),
           orders: orderbook.snapshotOrderbook(),
           funding: (() => {
-            const state = this.fundingStates.get(market_id)!;
+            const state = market.funding;
             return {
               last_settled_interval_ms: state.lastSettledIntervalMs,
-              fixed_rate: state.fixedRate === null ? null : String(state.fixedRate),
+              fixed_rate:
+                state.fixedRate === null ? null : String(state.fixedRate),
               premium_sum: String(state.premiumSum),
               premium_samples: state.premiumSamples,
               premium_interval_ms: state.premiumIntervalMs,
@@ -379,8 +409,12 @@ class Engine {
             return {
               maintenance_margin_rate: String(risk.maintenanceMarginRate),
               liquidation_fee_rate: String(risk.liquidationFeeRate),
-              max_leverage: risk.maxLeverage === null ? null : String(risk.maxLeverage),
-              max_liquidation_quantity: risk.maxLiquidationQuantity === null ? null : String(risk.maxLiquidationQuantity),
+              max_leverage:
+                risk.maxLeverage === null ? null : String(risk.maxLeverage),
+              max_liquidation_quantity:
+                risk.maxLiquidationQuantity === null
+                  ? null
+                  : String(risk.maxLiquidationQuantity),
             };
           })(),
         };
@@ -388,21 +422,21 @@ class Engine {
         snapshot.markets.push(market_data);
       });
 
-      const temporaryPath = `${SNAPSHOT_PATH}.${process.pid}.tmp`;
+      const temporaryPath = `${RUNTIME_CONFIG.snapshotPath}.${process.pid}.tmp`;
       writeFileSync(temporaryPath, JSON.stringify(snapshot));
-      renameSync(temporaryPath, SNAPSHOT_PATH);
-    }, 3000);
-  }
+      renameSync(temporaryPath, RUNTIME_CONFIG.snapshotPath);
+    }, ENGINE_CONSTANTS.SNAPSHOT_INTERVAL_MS);
+  };
 
-  stopSnapshot() {
+  stopSnapshot = () => {
     if (this.snapshotTimer) clearInterval(this.snapshotTimer);
     this.snapshotTimer = undefined;
-  }
+  };
 
-  processEngineOrder(
+  processEngineOrder = (
     request: EngineCommand,
     replayTimestamp?: number
-  ): EngineResponse {
+  ): EngineResponse => {
     this.replayTimestamp = replayTimestamp ?? null;
     try {
       switch (request.action) {
@@ -423,10 +457,14 @@ class Engine {
         case "MARK_PRICE_UPDATE":
           return this.markPriceUpdate(request);
         case "RETRY_LIQUIDATIONS":
-          for (const marketId of this.orderbooks.keys()) {
-            const metadata = this.markPriceMetadata.get(marketId);
-            if (!metadata || (this.replayTimestamp ?? Date.now()) -
-              metadata.source_timestamp > this.MAX_MARK_PRICE_AGE_MS) continue;
+          for (const marketId of this.markets.keys()) {
+            const metadata = this.markets.get(marketId)?.markPriceMetadata;
+            if (
+              !metadata ||
+              (this.replayTimestamp ?? Date.now()) - metadata.source_timestamp >
+                this.MAX_MARK_PRICE_AGE_MS
+            )
+              continue;
             this.retryActiveLiquidations(marketId);
           }
           return engine_response("Liquidation retries processed", 1);
@@ -448,40 +486,37 @@ class Engine {
     } finally {
       this.replayTimestamp = null;
     }
-  }
+  };
 
-  processEngineCommand(
+  processEngineCommand = (
     request: EngineCommand,
     replayTimestamp?: number,
     sourceMessageId?: string
-  ): EngineCommandResult {
-    this.haltedMarkets ??= new Set();
-    this.fundingStates ??= new Map();
-    this.marketQuotes ??= new Map();
+  ): EngineCommandResult => {
     this.liquidationQueue ??= new Map();
     this.processingLiquidations ??= false;
     const sourceTimestamp = sourceMessageId
       ? Number(sourceMessageId.split("-")[0])
       : undefined;
     const timestampMs = sourceTimestamp ?? replayTimestamp ?? Date.now();
-    if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
-      throw new Error("Invalid engine command timestamp");
-    }
+
+    //group of events that occur in engine which are pushed to different services
     const events = {
       db: [] as DBEventDraft[],
       ws: [] as WSEventDraft[],
-      changedBooks: new Set<string>(),
-      changedTickers: new Set<string>(),
+      changedBooks: new Set<string>(), //market_id for those who had a trade compelted
+      changedTickers: new Set<string>(), //market_id for those who had a trade compelted
       candles: new Map<string, CandleDraft>(),
       timestampMs,
+      liquidationOrderSequence: 0,
     };
     this.commandEvents = events;
     this.currentSourceMessageId = sourceMessageId ?? randomUUID();
-    this.liquidationOrderSequence = 0;
+
     try {
       const response = this.processEngineOrder(request, replayTimestamp);
       for (const market_id of events.changedBooks) {
-        const orderbook = this.orderbooks.get(market_id);
+        const orderbook = this.markets.get(market_id)?.book;
         if (!orderbook) continue;
         this.emitWsEvent({
           event_type: "BOOK",
@@ -489,11 +524,11 @@ class Engine {
         });
       }
       for (const market_id of events.changedTickers) {
-        const orderbook = this.orderbooks.get(market_id);
+        const orderbook = this.markets.get(market_id)?.book;
         if (!orderbook) continue;
         const { last_trade_id, last_traded_price } =
           orderbook.fetchMarketData();
-        const mark_price = this.markPrices.get(market_id);
+        const mark_price = this.markets.get(market_id)?.markPrice;
         this.emitWsEvent({
           event_type: "TICKER",
           data: {
@@ -505,7 +540,9 @@ class Engine {
               last_trade_id,
               last_traded_price: formatFixed(last_traded_price),
             }),
-            ...(this.haltedMarkets.has(market_id) && { trading_halted: true }),
+            ...(this.markets.get(market_id)?.halted && {
+              trading_halted: true,
+            }),
             ...orderbook.getBestPrices(),
           },
         });
@@ -569,30 +606,33 @@ class Engine {
       this.commandEvents = null;
       this.currentSourceMessageId = null;
     }
-  }
+  };
 
-  private emitDbEvent(event: DBEventDraft): void {
+  private emitDbEvent = (event: DBEventDraft): void => {
     this.commandEvents?.db.push(event);
-  }
+  };
 
-  private emitWsEvent(event: WSEventDraft): void {
+  private emitWsEvent = (event: WSEventDraft): void => {
     this.commandEvents?.ws.push(event);
-  }
+  };
 
-  private markBookChanged(market_id: string): void {
+  private markBookChanged = (market_id: string): void => {
     this.commandEvents?.changedBooks.add(market_id);
     this.commandEvents?.changedTickers.add(market_id);
-  }
+  };
 
-  private emitTrades(
+  private emitTrades = (
     market_id: string,
     taker_side: OrderSide,
     fills: Fill[]
-  ): void {
+  ): void => {
     for (const fill of fills) {
       const events = this.commandEvents;
       if (events) {
-        const start_ms = Math.floor(events.timestampMs / 60_000) * 60_000;
+        const start_ms =
+          Math.floor(
+            events.timestampMs / MARKET_DATA_CONSTANTS.CANDLE_INTERVAL_MS
+          ) * MARKET_DATA_CONSTANTS.CANDLE_INTERVAL_MS;
         const key = `${market_id}:${start_ms}`;
         const candle = events.candles.get(key);
         const quoteVolume = calculateNotional(fill.price, fill.filled);
@@ -628,9 +668,9 @@ class Engine {
         },
       });
     }
-  }
+  };
 
-  private onramp(request: CommandOf<"ONRAMP">): EngineResponse {
+  private onramp = (request: CommandOf<"ONRAMP">): EngineResponse => {
     if (request.amount <= 0n) {
       return engine_response("Cannot ramp negative value", 0);
     }
@@ -654,9 +694,9 @@ class Engine {
       },
     });
     return engine_response("Onramp successfull", 1);
-  }
+  };
 
-  private getBalance(request: CommandOf<"GET_BALANCE">): EngineResponse {
+  private getBalance = (request: CommandOf<"GET_BALANCE">): EngineResponse => {
     const account = this.accounts.get(request.user_id);
     if (!account) {
       return engine_response("Balance Retrieved", 1, {
@@ -669,13 +709,13 @@ class Engine {
       available: formatFixed(account.collateral.available),
       reserved: formatFixed(account.collateral.reserved),
     });
-  }
+  };
 
-  private settleFilledOrderMargin(
+  private settleFilledOrderMargin = (
     user_id: string,
     order_margin_consumed: bigint,
     position_margin_added: bigint
-  ): void {
+  ): void => {
     if (position_margin_added > order_margin_consumed) {
       this.accounts.reserveMargin(
         user_id,
@@ -687,19 +727,30 @@ class Engine {
         order_margin_consumed - position_margin_added
       );
     }
-  }
+  };
 
-  private realizeClosedFunding(user_id: string, position: Position, closedQuantity: bigint): void {
+  private realizeClosedFunding = (
+    user_id: string,
+    position: Position,
+    closedQuantity: bigint
+  ): void => {
     if (position.funding_accrued === 0n) return;
-    const amount = closedQuantity === position.quantity
-      ? position.funding_accrued
-      : divideRounded(position.funding_accrued * closedQuantity, position.quantity, "toward-zero");
+    const amount =
+      closedQuantity === position.quantity
+        ? position.funding_accrued
+        : divideRounded(
+            position.funding_accrued * closedQuantity,
+            position.quantity,
+            "toward-zero"
+          );
     position.funding_accrued -= amount;
     this.accounts.credit(user_id, amount);
-  }
+  };
 
-  private setMarketRisk(request: CommandOf<"SET_MARKET_RISK">): EngineResponse {
-    if (!this.orderbooks.has(request.market_id)) {
+  private setMarketRisk = (
+    request: CommandOf<"SET_MARKET_RISK">
+  ): EngineResponse => {
+    if (!this.markets.has(request.market_id)) {
       throw new Error("Incorrect Market ID");
     }
     const config = this.validateRiskConfig({
@@ -708,195 +759,301 @@ class Engine {
       maxLeverage: request.max_leverage,
       maxLiquidationQuantity: request.max_liquidation_quantity,
     });
-    this.marketRiskConfigs ??= new Map();
-    this.marketRiskConfigs.set(request.market_id, config);
+    this.markets.get(request.market_id)!.risk = config;
     this.emitDbEvent({
       event_type: "MARKET_RISK_UPDATE",
-      changes: { market_data: [{
-        market_id: request.market_id,
-        maintenance_margin_rate: config.maintenanceMarginRate,
-        liquidation_fee_rate: config.liquidationFeeRate,
-        max_leverage: config.maxLeverage,
-        max_liquidation_quantity: config.maxLiquidationQuantity,
-      }] },
+      changes: {
+        market_data: [
+          {
+            market_id: request.market_id,
+            maintenance_margin_rate: config.maintenanceMarginRate,
+            liquidation_fee_rate: config.liquidationFeeRate,
+            max_leverage: config.maxLeverage,
+            max_liquidation_quantity: config.maxLiquidationQuantity,
+          },
+        ],
+      },
     });
     // A stricter maintenance setting can make existing positions liquidatable.
-    const markMetadata = this.markPriceMetadata.get(request.market_id);
-    if (markMetadata && this.markPrices.has(request.market_id) &&
-      (this.replayTimestamp ?? Date.now()) - markMetadata.source_timestamp <= this.MAX_MARK_PRICE_AGE_MS) {
-      for (const user_id of this.positionUsersByMarket.get(request.market_id) ?? []) {
+    const markMetadata = this.markets.get(request.market_id)?.markPriceMetadata;
+    if (
+      markMetadata &&
+      this.markets.get(request.market_id)?.markPrice !== undefined &&
+      (this.replayTimestamp ?? Date.now()) - markMetadata.source_timestamp <=
+        this.MAX_MARK_PRICE_AGE_MS
+    ) {
+      for (const user_id of this.markets.get(request.market_id)
+        ?.positionUserIds ?? []) {
         this.liquidationCheck({ user_id, market_id: request.market_id });
       }
     }
     return engine_response("Market risk configuration updated", 1);
-  }
+  };
 
-  private registerMarket(request: CommandOf<"REGISTER_MARKET">): EngineResponse {
+  private registerMarket = (
+    request: CommandOf<"REGISTER_MARKET">
+  ): EngineResponse => {
     const { market_id, slug } = request;
     const quote = slug.split("-")[1]!;
-    if (this.orderbooks.has(market_id)) {
-      if (this.marketQuotes.get(market_id) !== quote) {
-        return engine_response("Market ID already exists with a different quote", 0);
+    if (this.markets.has(market_id)) {
+      if (this.markets.get(market_id)?.quote !== quote) {
+        return engine_response(
+          "Market ID already exists with a different quote",
+          0
+        );
       }
       return engine_response("Market already registered", 1, { market_id });
     }
-    this.marketQuotes.set(market_id, quote);
-    this.orderbooks.set(market_id, new Orderbook({
-      market_id, last_traded_price: "0", last_trade_id: "", orders: [],
-    }, this.MAKER_FEE_RATE));
-    this.positionUsersByMarket.set(market_id, new Set());
-    this.fundingStates.set(market_id, this.emptyFundingState());
-    this.marketRiskConfigs.set(market_id, this.validateRiskConfig({
-      maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
-      liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
-      maxLeverage: null,
-      maxLiquidationQuantity: null,
-    }));
+    this.markets.set(market_id, this.createMarketContext(market_id, quote));
     return engine_response("Market registered", 1, { market_id });
-  }
+  };
 
-  private estimatedFundingRate(state: FundingState): bigint {
+  private estimatedFundingRate = (state: FundingState): bigint => {
     if (state.fixedRate !== null) return state.fixedRate;
-    if (state.premiumSamples < MIN_FUNDING_SAMPLES) return 0n;
-    return clampFundingRate(divideRounded(state.premiumSum, BigInt(state.premiumSamples), "toward-zero"));
-  }
+    if (state.premiumSamples < FUNDING_CONSTANTS.MIN_SAMPLES) return 0n;
+    return clampFundingRate(
+      divideRounded(
+        state.premiumSum,
+        BigInt(state.premiumSamples),
+        "toward-zero"
+      )
+    );
+  };
 
-  private fundingResponse(market_id: string) {
-    const state = this.fundingStates.get(market_id)!;
+  private fundingResponse = (market_id: string) => {
+    const state = this.markets.get(market_id)!.funding;
     const now = this.replayTimestamp ?? Date.now();
     return {
       market_id,
       rate: formatFixed(this.estimatedFundingRate(state)),
       mode: state.fixedRate === null ? "PREMIUM" : "FIXED",
-      ready: state.fixedRate !== null || state.premiumSamples >= MIN_FUNDING_SAMPLES,
+      ready:
+        state.fixedRate !== null ||
+        state.premiumSamples >= FUNDING_CONSTANTS.MIN_SAMPLES,
       last_rate: formatFixed(state.lastRate),
       last_settled_ms: state.lastSettledIntervalMs,
       next_funding_ms: fundingIntervalEnd(now),
       sample_count: state.premiumSamples,
-      minimum_samples: MIN_FUNDING_SAMPLES,
+      minimum_samples: FUNDING_CONSTANTS.MIN_SAMPLES,
     };
-  }
+  };
 
-  private getFundingRate(request: CommandOf<"GET_FUNDING_RATE">): EngineResponse {
-    if (!this.orderbooks.has(request.market_id)) return engine_response("Incorrect Market ID", 0);
-    return engine_response("Funding state retrieved", 1, this.fundingResponse(request.market_id));
-  }
+  private getFundingRate = (
+    request: CommandOf<"GET_FUNDING_RATE">
+  ): EngineResponse => {
+    if (!this.markets.has(request.market_id))
+      return engine_response("Incorrect Market ID", 0);
+    return engine_response(
+      "Funding state retrieved",
+      1,
+      this.fundingResponse(request.market_id)
+    );
+  };
 
-  private setFundingRate(request: CommandOf<"SET_FUNDING_RATE">): EngineResponse {
-    const state = this.fundingStates.get(request.market_id);
+  private setFundingRate = (
+    request: CommandOf<"SET_FUNDING_RATE">
+  ): EngineResponse => {
+    const state = this.markets.get(request.market_id)?.funding;
     if (!state) return engine_response("Incorrect Market ID", 0);
-    if (request.funding_rate !== null &&
-      clampFundingRate(request.funding_rate) !== request.funding_rate) {
+    if (
+      request.funding_rate !== null &&
+      clampFundingRate(request.funding_rate) !== request.funding_rate
+    ) {
       return engine_response("Funding rate exceeds the market cap", 0);
     }
     state.fixedRate = request.funding_rate;
-    this.emitDbEvent({ event_type: "FUNDING_CONFIG_UPDATE", changes: {
-      market_data: [{ market_id: request.market_id, funding_fixed_rate: state.fixedRate }],
-    } });
+    this.emitDbEvent({
+      event_type: "FUNDING_CONFIG_UPDATE",
+      changes: {
+        market_data: [
+          { market_id: request.market_id, funding_fixed_rate: state.fixedRate },
+        ],
+      },
+    });
     this.emitFundingState(request.market_id);
-    return engine_response("Funding configuration updated", 1, this.fundingResponse(request.market_id));
-  }
+    return engine_response(
+      "Funding configuration updated",
+      1,
+      this.fundingResponse(request.market_id)
+    );
+  };
 
-  private emitFundingState(market_id: string): void {
-    const state = this.fundingStates.get(market_id)!;
-    this.emitWsEvent({ event_type: "FUNDING", data: {
-      market_id,
-      rate: formatFixed(this.estimatedFundingRate(state)),
-      ready: state.fixedRate !== null || state.premiumSamples >= MIN_FUNDING_SAMPLES,
-      next_funding_ms: fundingIntervalEnd(this.commandEvents?.timestampMs ?? Date.now()),
-      last_settled_ms: state.lastSettledIntervalMs,
-      sample_count: state.premiumSamples,
-    } });
-  }
+  private emitFundingState = (market_id: string): void => {
+    const state = this.markets.get(market_id)!.funding;
+    this.emitWsEvent({
+      event_type: "FUNDING",
+      data: {
+        market_id,
+        rate: formatFixed(this.estimatedFundingRate(state)),
+        ready:
+          state.fixedRate !== null ||
+          state.premiumSamples >= FUNDING_CONSTANTS.MIN_SAMPLES,
+        next_funding_ms: fundingIntervalEnd(
+          this.commandEvents?.timestampMs ?? Date.now()
+        ),
+        last_settled_ms: state.lastSettledIntervalMs,
+        sample_count: state.premiumSamples,
+      },
+    });
+  };
 
-  private settleFunding(request: CommandOf<"SETTLE_FUNDING">): EngineResponse {
+  private settleFunding = (
+    request: CommandOf<"SETTLE_FUNDING">
+  ): EngineResponse => {
     const { market_id, interval_end_ms } = request;
-    const state = this.fundingStates.get(market_id);
+    const state = this.markets.get(market_id)?.funding;
     if (!state) return engine_response("Incorrect Market ID", 0);
-    if (this.marketQuotes.get(market_id) !== MARKET_CONFIG.COLLATERAL_ASSET) {
+    if (this.markets.get(market_id)?.quote !== MARKET_CONFIG.COLLATERAL_ASSET) {
       return engine_response("Funding requires a collateral-quoted market", 0);
     }
-    const now = this.commandEvents?.timestampMs ?? this.replayTimestamp ?? Date.now();
-    if (interval_end_ms % FUNDING_INTERVAL_MS !== 0 || interval_end_ms > now) {
+    const now =
+      this.commandEvents?.timestampMs ?? this.replayTimestamp ?? Date.now();
+    if (
+      interval_end_ms % FUNDING_CONSTANTS.INTERVAL_MS !== 0 ||
+      interval_end_ms > now
+    ) {
       return engine_response("Invalid funding interval", 0);
     }
     if (interval_end_ms <= state.lastSettledIntervalMs) {
-      return engine_response("Funding interval already settled", 1, this.fundingResponse(market_id));
+      return engine_response(
+        "Funding interval already settled",
+        1,
+        this.fundingResponse(market_id)
+      );
     }
-    const late = now - interval_end_ms > 60_000;
+    const late =
+      now - interval_end_ms > FUNDING_CONSTANTS.SETTLEMENT_LATE_THRESHOLD_MS;
     // The current mark feed is a two-venue spot index. Keep this name explicit
     // here so a future perp mark can diverge without changing funding notional.
     const indexPrice = late ? 0n : this.requireFreshMarkPrice(market_id);
-    const sampleCount = state.premiumIntervalMs === interval_end_ms ? state.premiumSamples : 0;
-    const skipped = late || (state.fixedRate === null && sampleCount < MIN_FUNDING_SAMPLES);
+    const sampleCount =
+      state.premiumIntervalMs === interval_end_ms ? state.premiumSamples : 0;
+    const skipped =
+      late ||
+      (state.fixedRate === null && sampleCount < FUNDING_CONSTANTS.MIN_SAMPLES);
     const rate = skipped ? 0n : this.estimatedFundingRate(state);
-    const participants = [...(this.positionUsersByMarket.get(market_id) ?? [])]
+    const participants = [
+      ...(this.markets.get(market_id)?.positionUserIds ?? []),
+    ]
       .map((userId) => {
         const account = this.accounts.get(userId)!;
         const position = account.positions.get(market_id)!;
         return { userId, account, position };
-      }).filter(({ position }) => position.quantity > 0n);
-    const batch = calculateFundingPayments(participants, indexPrice, rate, this.insuranceFund.available());
+      })
+      .filter(({ position }) => position.quantity > 0n);
+    const batch = calculateFundingPayments(
+      participants,
+      indexPrice,
+      rate,
+      this.insuranceFund.available()
+    );
     const { payments } = batch;
     const insuranceChanges = payments
       .filter((payment) => payment.insuranceCovered > 0n)
-      .map((payment) => this.insuranceFund.coverFundingShortfall(
-        payment.insuranceCovered, market_id, payment.userId, interval_end_ms,
-      ));
+      .map((payment) =>
+        this.insuranceFund.coverFundingShortfall(
+          payment.insuranceCovered,
+          market_id,
+          payment.userId,
+          interval_end_ms
+        )
+      );
     for (const payment of payments) {
       const account = this.accounts.get(payment.userId)!;
-      account.collateral.available += payment.amount < 0n ? -payment.availableDebit : payment.amount;
+      account.collateral.available +=
+        payment.amount < 0n ? -payment.availableDebit : payment.amount;
       if (payment.marginDebit) {
         account.collateral.reserved -= payment.marginDebit;
-        account.positions.get(market_id)!.reserved_margin -= payment.marginDebit;
+        account.positions.get(market_id)!.reserved_margin -=
+          payment.marginDebit;
       }
     }
     state.lastSettledIntervalMs = interval_end_ms;
     state.lastRate = rate;
     state.premiumSum = 0n;
     state.premiumSamples = 0;
-    state.premiumIntervalMs = interval_end_ms + FUNDING_INTERVAL_MS;
-    this.emitDbEvent({ event_type: "FUNDING_SETTLEMENT", changes: {
-      balances: payments.map(({ userId }) => {
-        const collateral = this.accounts.get(userId)!.collateral;
-        return { user_id: userId, available: collateral.available, reserved: collateral.reserved };
-      }),
-      positions: payments.filter((payment) => payment.marginDebit > 0n).map(({ userId }) => ({
-        user_id: userId,
-        market_id,
-        position: this.accounts.get(userId)!.positions.get(market_id)!,
-      })),
-      market_data: [{ market_id, funding_last_rate: rate, last_funding_ms: interval_end_ms,
-        next_funding_ms: interval_end_ms + FUNDING_INTERVAL_MS }],
-      funding_intervals: [{ market_id, interval_end_ms, index_price: indexPrice,
-        rate, sample_count: sampleCount,
-        status: skipped ? "SKIPPED" : batch.uncoveredShortfall > 0n ? "PARTIAL" : "SETTLED",
-        total_paid: payments.reduce((sum, payment) => payment.amount > 0n ? sum + payment.amount : sum, 0n),
-        insurance_used: batch.insuranceUsed,
-        uncovered_shortfall: batch.uncoveredShortfall }],
-      funding_payments: payments.map((payment) => ({
-        market_id, interval_end_ms, user_id: payment.userId,
-        amount: payment.amount, requested_amount: payment.requestedAmount,
-        available_debit: payment.availableDebit,
-        margin_debit: payment.marginDebit,
-        insurance_covered: payment.insuranceCovered,
-        uncovered_shortfall: payment.uncoveredShortfall,
-      })),
-      ...(insuranceChanges.length > 0 && { insurance_fund: insuranceChanges }),
-    } });
+    state.premiumIntervalMs = interval_end_ms + FUNDING_CONSTANTS.INTERVAL_MS;
+    this.emitDbEvent({
+      event_type: "FUNDING_SETTLEMENT",
+      changes: {
+        balances: payments.map(({ userId }) => {
+          const collateral = this.accounts.get(userId)!.collateral;
+          return {
+            user_id: userId,
+            available: collateral.available,
+            reserved: collateral.reserved,
+          };
+        }),
+        positions: payments
+          .filter((payment) => payment.marginDebit > 0n)
+          .map(({ userId }) => ({
+            user_id: userId,
+            market_id,
+            position: this.accounts.get(userId)!.positions.get(market_id)!,
+          })),
+        market_data: [
+          {
+            market_id,
+            funding_last_rate: rate,
+            last_funding_ms: interval_end_ms,
+            next_funding_ms: interval_end_ms + FUNDING_CONSTANTS.INTERVAL_MS,
+          },
+        ],
+        funding_intervals: [
+          {
+            market_id,
+            interval_end_ms,
+            index_price: indexPrice,
+            rate,
+            sample_count: sampleCount,
+            status: skipped
+              ? "SKIPPED"
+              : batch.uncoveredShortfall > 0n
+                ? "PARTIAL"
+                : "SETTLED",
+            total_paid: payments.reduce(
+              (sum, payment) =>
+                payment.amount > 0n ? sum + payment.amount : sum,
+              0n
+            ),
+            insurance_used: batch.insuranceUsed,
+            uncovered_shortfall: batch.uncoveredShortfall,
+          },
+        ],
+        funding_payments: payments.map((payment) => ({
+          market_id,
+          interval_end_ms,
+          user_id: payment.userId,
+          amount: payment.amount,
+          requested_amount: payment.requestedAmount,
+          available_debit: payment.availableDebit,
+          margin_debit: payment.marginDebit,
+          insurance_covered: payment.insuranceCovered,
+          uncovered_shortfall: payment.uncoveredShortfall,
+        })),
+        ...(insuranceChanges.length > 0 && {
+          insurance_fund: insuranceChanges,
+        }),
+      },
+    });
     this.emitFundingState(market_id);
     for (const payment of payments) {
       if (payment.marginDebit > 0n || payment.uncoveredShortfall > 0n) {
         this.liquidationCheck({ user_id: payment.userId, market_id });
       }
     }
-    return engine_response(skipped ? "Funding skipped: late interval or insufficient premium samples" : "Funding settled", 1,
-      this.fundingResponse(market_id));
-  }
+    return engine_response(
+      skipped
+        ? "Funding skipped: late interval or insufficient premium samples"
+        : "Funding settled",
+      1,
+      this.fundingResponse(market_id)
+    );
+  };
 
-  private requireFreshMarkPrice(market_id: string) {
-    const mark_price = this.markPrices.get(market_id);
-    const mark_price_metadata = this.markPriceMetadata.get(market_id);
+  private requireFreshMarkPrice = (market_id: string) => {
+    const mark_price = this.markets.get(market_id)?.markPrice;
+    const mark_price_metadata = this.markets.get(market_id)?.markPriceMetadata;
 
     if (
       !mark_price ||
@@ -910,9 +1067,67 @@ class Engine {
     }
 
     return mark_price;
-  }
+  };
 
-  private placeOrder(request: CommandOf<"PLACE_ORDER">): EngineResponse {
+  private calculateOrderReservation = (
+    request: CommandOf<"PLACE_ORDER">,
+    orderbook: Orderbook,
+    existingPosition?: Position
+  ): {
+    initialMargin: bigint;
+    feeReserve: bigint;
+    requiredAvailable: bigint;
+  } => {
+    const { price, quantity, filled, leverage, side, type } = request;
+    const remainingQuantity = quantity - filled;
+    const bestOpposite = orderbook.getBestOppositePrice(side);
+    const priceCap =
+      side === OrderSide.SELL
+        ? type === OrderType.MARKET
+          ? (bestOpposite ?? 0n)
+          : max(price, bestOpposite ?? 0n)
+        : price;
+    // Market buys use price as their quote budget
+    // sells cannot fill above the current best bid while this synchronous order executes.
+    const maximumNotional =
+      type === OrderType.MARKET && side === OrderSide.BUY
+        ? bestOpposite === undefined
+          ? 0n
+          : price
+        : calculateNotional(priceCap, remainingQuantity);
+    const roundingAllowance =
+      maximumNotional > 0n ? BigInt(orderbook.getRestingOrderCount() + 1) : 0n;
+    const feeReserve =
+      calculateFee(
+        maximumNotional,
+        max(this.TAKER_FEE_RATE, this.MAKER_FEE_RATE)
+      ) + roundingAllowance;
+    const maximumMargin =
+      calculateInitialMargin(maximumNotional, leverage) + roundingAllowance;
+    const closesEntireMarketOrder =
+      type === OrderType.MARKET &&
+      existingPosition &&
+      existingPosition.type !==
+        (side === OrderSide.SELL ? PositionType.SHORT : PositionType.LONG) &&
+      existingPosition.quantity >= remainingQuantity;
+    const initialMargin =
+      type === OrderType.LIMIT
+        ? calculateInitialMargin(
+            calculateNotional(price, remainingQuantity),
+            leverage
+          )
+        : closesEntireMarketOrder
+          ? 0n
+          : maximumMargin;
+    return {
+      initialMargin,
+      feeReserve,
+      requiredAvailable:
+        (type === OrderType.LIMIT ? maximumMargin : initialMargin) + feeReserve,
+    };
+  };
+
+  private placeOrder = (request: CommandOf<"PLACE_ORDER">): EngineResponse => {
     try {
       const {
         action,
@@ -924,15 +1139,18 @@ class Engine {
         ...order
       } = request;
 
-      const orderbook = this.orderbooks.get(market_id);
+      const orderbook = this.markets.get(market_id)?.book;
       if (!orderbook) {
         throw new Error("Incorrect Market ID");
       }
-      if (this.haltedMarkets.has(market_id)) {
+      if (this.markets.get(market_id)?.halted) {
         throw new Error("Trading is halted for this market");
       }
       const riskConfig = this.riskConfig(market_id);
-      if (riskConfig.maxLeverage !== null && leverage > riskConfig.maxLeverage) {
+      if (
+        riskConfig.maxLeverage !== null &&
+        leverage > riskConfig.maxLeverage
+      ) {
         throw new Error("Leverage exceeds this market's limit");
       }
 
@@ -941,7 +1159,10 @@ class Engine {
         return engine_response("User Account does not exist", 0);
       }
       const existingPosition = account.positions.get(market_id);
-      if (existingPosition && existingPosition.state !== PositionState.HEALTHY) {
+      if (
+        existingPosition &&
+        existingPosition.state !== PositionState.HEALTHY
+      ) {
         throw new Error("Position is under liquidation");
       }
 
@@ -949,79 +1170,20 @@ class Engine {
         throw new Error("Filled quantity must be less than order quantity");
       }
 
-      const mark_price = this.requireFreshMarkPrice(market_id);
+      this.requireFreshMarkPrice(market_id);
 
-      if (!mark_price) {
-        throw new Error("Mark Price not found for this market ID");
-      }
-
-      const notional = calculateNotional(price, quantity - order.filled);
-      const preview_fills = orderbook.previewOrder({
-        user_id,
-        market_id,
-        price,
-        quantity,
-        leverage,
-        ...order,
-      });
-      const preview_filled = preview_fills.reduce(
-        (total, fill) => total + fill.quantity,
-        0n
-      );
-      const taker_fee_reserve = preview_fills.reduce(
-        (total, fill) =>
-          total +
-          calculateFee(
-            calculateNotional(fill.price, fill.quantity),
-            this.TAKER_FEE_RATE ?? 0n
-          ),
-        0n
-      );
-      const resting_quantity =
-        order.type === OrderType.LIMIT
-          ? quantity - order.filled - preview_filled
-          : 0n;
-      const maker_fee_reserve = calculateFee(
-        calculateNotional(price, resting_quantity),
-        this.MAKER_FEE_RATE ?? 0n
-      );
-      const initial_fee = taker_fee_reserve + maker_fee_reserve;
-      let initial_margin = calculateInitialMargin(notional, leverage);
-      if (order.type === OrderType.MARKET) {
-        const current_position = account.positions.get(market_id);
-        let position_type = current_position?.type;
-        let position_quantity = current_position?.quantity ?? 0n;
-        const order_position_type =
-          order.side === OrderSide.SELL
-            ? PositionType.SHORT
-            : PositionType.LONG;
-        initial_margin = 0n;
-
-        for (const preview_fill of preview_fills) {
-          let opening_qty = preview_fill.quantity;
-          if (position_type && position_type !== order_position_type) {
-            const closing_qty =
-              position_quantity < opening_qty ? position_quantity : opening_qty;
-            position_quantity -= closing_qty;
-            opening_qty -= closing_qty;
-            if (position_quantity === 0n) position_type = undefined;
-          }
-
-          if (opening_qty > 0n) {
-            initial_margin += calculateInitialMargin(
-              calculateNotional(preview_fill.price, opening_qty),
-              leverage
-            );
-            position_type = order_position_type;
-            position_quantity += opening_qty;
-          }
-        }
-      }
-      if (account.collateral.available < initial_margin + initial_fee) {
+      //create initial taker margin inlcuding the taker fee
+      const {
+        initialMargin: initial_margin,
+        feeReserve,
+        requiredAvailable,
+      } = this.calculateOrderReservation(request, orderbook, existingPosition);
+      if (account.collateral.available < requiredAvailable) {
         throw new Error("Insufficient funds");
       }
 
-      this.accounts.reserveMargin(user_id, initial_margin + initial_fee);
+      //reserve taker margin
+      this.accounts.reserveMargin(user_id, initial_margin + feeReserve);
 
       const result = orderbook.placeOrder({
         user_id,
@@ -1031,18 +1193,34 @@ class Engine {
         leverage,
         ...order,
       });
-      if (result.fills.length !== preview_fills.length) {
-        throw new Error("Order book changed between fee preview and execution");
-      }
-      result.fills.forEach((fill) => {
+
+      //calculate actual taker fees of filled qty
+      let takerFees = 0n;
+      for (const fill of result.fills) {
         fill.taker_fee = calculateFee(
           calculateNotional(fill.price, fill.filled),
-          this.TAKER_FEE_RATE ?? 0n
+          this.TAKER_FEE_RATE
         );
-      });
+        takerFees += fill.taker_fee;
+      }
+
+      const restingQuantity =
+        order.type === OrderType.LIMIT ? quantity - result.order.filled : 0n;
+      //calculate maker fee for the resting qty
+      const restingMakerFee = calculateFee(
+        calculateNotional(price, restingQuantity),
+        this.MAKER_FEE_RATE
+      );
+
+      //calculated delta of assumed fee and actual fee
+      const initial_fee = takerFees + restingMakerFee;
+      const unusedFeeReserve = feeReserve - initial_fee;
+
+      //update flags for change in market data
       if (order.type === OrderType.LIMIT || result.fills.length > 0) {
         this.markBookChanged(market_id);
       }
+      //update candles and push trades to ws events
       this.emitTrades(market_id, order.side, result.fills);
 
       if (order.type == OrderType.LIMIT) {
@@ -1058,6 +1236,7 @@ class Engine {
 
       let trading_fee_change: DBEventDraft["changes"]["trading_fee_account"] =
         [];
+      let market_position_margin_added = 0n;
       if (result.fills.length > 0) {
         let taker_acc = this.accounts.get(user_id);
         if (!taker_acc) {
@@ -1069,8 +1248,8 @@ class Engine {
         let taker_remaining = quantity - order.filled;
 
         const liquidation_risks = new Set<string>();
-        let market_position_margin_added = 0n;
         const fee_charges: Parameters<TradingFeeAccount["collect"]>[0] = [];
+
         for (const fill of result.fills) {
           this.accounts.debitMargin(fill.taker_user_id, fill.taker_fee);
           this.accounts.debitMargin(
@@ -1107,6 +1286,29 @@ class Engine {
               calculateNotional(price, taker_remaining),
               leverage
             );
+
+          // A user's own buy and sell cancel economically. Keep the trade and
+          // both fees, but release the filled order margin without touching
+          // their existing position.
+          if (fill.taker_user_id === fill.maker_user_id) {
+            if (order.type === OrderType.LIMIT) {
+              this.settleFilledOrderMargin(
+                user_id,
+                taker_order_margin_consumed,
+                0n
+              );
+            }
+            this.settleFilledOrderMargin(
+              user_id,
+              fill.maker_order_margin_consumed,
+              0n
+            );
+            if (fill.maker_order_status === OrderStatus.FILLED) {
+              account.orders.delete(fill.maker_order_id);
+            }
+            continue;
+          }
+
           let taker_position_margin_added = 0n;
 
           //========Update Taker Position===========
@@ -1125,7 +1327,9 @@ class Engine {
               liquidation_attempts: 0,
             };
             taker_acc?.positions.set(market_id, taker_position);
-            this.positionUsersByMarket.get(market_id)?.add(taker_acc.user_id);
+            this.markets
+              .get(market_id)
+              ?.positionUserIds?.add(taker_acc.user_id);
           }
 
           //========Taker Position and Current Order are same side===========
@@ -1156,7 +1360,11 @@ class Engine {
                 taker_acc.user_id,
                 taker_position.reserved_margin
               );
-              this.realizeClosedFunding(taker_acc.user_id, taker_position, taker_position.quantity);
+              this.realizeClosedFunding(
+                taker_acc.user_id,
+                taker_position,
+                taker_position.quantity
+              );
 
               const realizedPnl = calcUnrealisedPnL(
                 taker_position.type,
@@ -1168,9 +1376,9 @@ class Engine {
 
               //delete the redundant position
               taker_acc.positions.delete(market_id);
-              this.positionUsersByMarket
+              this.markets
                 .get(market_id)
-                ?.delete(taker_acc.user_id);
+                ?.positionUserIds?.delete(taker_acc.user_id);
 
               //========Incase the previous position cancels out and a opposite position is created===========
               if (taker_position.quantity < fill.filled) {
@@ -1203,9 +1411,9 @@ class Engine {
                 taker_position.quantity += rem_qty;
 
                 taker_acc.positions.set(market_id, taker_position);
-                this.positionUsersByMarket
+                this.markets
                   .get(market_id)
-                  ?.add(taker_acc.user_id);
+                  ?.positionUserIds?.add(taker_acc.user_id);
                 liquidation_risks.add(fill.taker_user_id);
               }
             } else {
@@ -1223,7 +1431,11 @@ class Engine {
               );
 
               taker_position.reserved_margin -= margin_released;
-              this.realizeClosedFunding(taker_acc.user_id, taker_position, fill.filled);
+              this.realizeClosedFunding(
+                taker_acc.user_id,
+                taker_position,
+                fill.filled
+              );
               taker_position.quantity -= fill.filled;
 
               liquidation_risks.add(fill.taker_user_id);
@@ -1271,7 +1483,9 @@ class Engine {
               liquidation_attempts: 0,
             };
             maker_acc?.positions.set(market_id, maker_position);
-            this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
+            this.markets
+              .get(market_id)
+              ?.positionUserIds?.add(maker_acc.user_id);
           }
 
           let maker_position_margin_added = 0n;
@@ -1303,7 +1517,11 @@ class Engine {
                 maker_acc.user_id,
                 maker_position.reserved_margin
               );
-              this.realizeClosedFunding(maker_acc.user_id, maker_position, maker_position.quantity);
+              this.realizeClosedFunding(
+                maker_acc.user_id,
+                maker_position,
+                maker_position.quantity
+              );
 
               const realizedPnl = calcUnrealisedPnL(
                 maker_position.type,
@@ -1315,9 +1533,9 @@ class Engine {
 
               //delete the redundant position
               maker_acc.positions.delete(market_id);
-              this.positionUsersByMarket
+              this.markets
                 .get(market_id)
-                ?.delete(maker_acc.user_id);
+                ?.positionUserIds?.delete(maker_acc.user_id);
 
               //========Incase the previous position cancels out and a opposite position is created===========
               if (maker_position.quantity < fill.filled) {
@@ -1355,9 +1573,9 @@ class Engine {
                 liquidation_risks.add(fill.maker_user_id);
 
                 maker_acc.positions.set(market_id, maker_position);
-                this.positionUsersByMarket
+                this.markets
                   .get(market_id)
-                  ?.add(maker_acc.user_id);
+                  ?.positionUserIds?.add(maker_acc.user_id);
               }
             } else {
               //========Incase the previous position donot cancels out but reduces===========
@@ -1374,7 +1592,11 @@ class Engine {
               );
 
               maker_position.reserved_margin -= margin_released;
-              this.realizeClosedFunding(maker_acc.user_id, maker_position, fill.filled);
+              this.realizeClosedFunding(
+                maker_acc.user_id,
+                maker_position,
+                fill.filled
+              );
               maker_position.quantity -= fill.filled;
 
               liquidation_risks.add(fill.maker_user_id);
@@ -1396,19 +1618,23 @@ class Engine {
         const fee_settlement = this.tradingFeeAccount.collect(fee_charges);
         trading_fee_change = [fee_settlement];
 
-        if (
-          order.type === OrderType.MARKET &&
-          initial_margin > market_position_margin_added
-        ) {
-          this.accounts.releaseMargin(
-            user_id,
-            initial_margin - market_position_margin_added
-          );
-        }
-
         for (const affected_user_id of liquidation_risks) {
           this.liquidationCheck({ user_id: affected_user_id, market_id });
         }
+      }
+
+      if (
+        order.type === OrderType.MARKET &&
+        initial_margin > market_position_margin_added
+      ) {
+        this.accounts.releaseMargin(
+          user_id,
+          initial_margin - market_position_margin_added
+        );
+      }
+
+      if (unusedFeeReserve > 0n) {
+        this.accounts.releaseMargin(user_id, unusedFeeReserve);
       }
 
       const order_db_update: NonNullable<DBEventInput["changes"]["orders"]> = [
@@ -1575,26 +1801,30 @@ class Engine {
         .flatMap((event) => event.changes.fills ?? [])
         .filter((fill) => fill.maker_order_id === result.order.order_id);
       if (retryFills.length) {
-        const finalFilled = result.order.filled + retryFills.reduce(
-          (sum, fill) => sum + BigInt(fill.filled), 0n,
-        );
+        const finalFilled =
+          result.order.filled +
+          retryFills.reduce((sum, fill) => sum + BigInt(fill.filled), 0n);
         const lastFill = retryFills[retryFills.length - 1]!;
         response.order.filled = formatFixed(finalFilled);
         response.order.status = lastFill.maker_order_status;
         response.order.rem_qty = formatFixed(quantity - finalFilled);
-        response.order.remaining_order_fee = formatFixed(BigInt(lastFill.maker_order_fee_remaining));
-        response.fills.push(...retryFills.map((fill) => ({
-          trade_id: fill.trade_id,
-          maker_order_id: fill.maker_order_id,
-          maker_user_id: fill.maker_user_id,
-          taker_order_id: fill.taker_order_id,
-          taker_user_id: fill.taker_user_id,
-          maker_order_status: fill.maker_order_status,
-          price: formatFixed(BigInt(fill.price)),
-          filled: formatFixed(BigInt(fill.filled)),
-          maker_fee: formatFixed(BigInt(fill.maker_order_fee_consumed)),
-          taker_fee: formatFixed(BigInt(fill.taker_fee)),
-        })));
+        response.order.remaining_order_fee = formatFixed(
+          BigInt(lastFill.maker_order_fee_remaining)
+        );
+        response.fills.push(
+          ...retryFills.map((fill) => ({
+            trade_id: fill.trade_id,
+            maker_order_id: fill.maker_order_id,
+            maker_user_id: fill.maker_user_id,
+            taker_order_id: fill.taker_order_id,
+            taker_user_id: fill.taker_user_id,
+            maker_order_status: fill.maker_order_status,
+            price: formatFixed(BigInt(fill.price)),
+            filled: formatFixed(BigInt(fill.filled)),
+            maker_fee: formatFixed(BigInt(fill.maker_order_fee_consumed)),
+            taker_fee: formatFixed(BigInt(fill.taker_fee)),
+          }))
+        );
       }
 
       return engine_response("Order placed successfully", 1, response);
@@ -1602,11 +1832,13 @@ class Engine {
       const err = error instanceof Error ? error : new Error(String(error));
       return engine_response(err.message, 0, null);
     }
-  }
+  };
 
-  private cancelOrder(request: CommandOf<"CANCEL_ORDER">): EngineResponse {
+  private cancelOrder = (
+    request: CommandOf<"CANCEL_ORDER">
+  ): EngineResponse => {
     const { action, ...cancel_request } = request;
-    const orderbook = this.orderbooks.get(cancel_request.market_id);
+    const orderbook = this.markets.get(cancel_request.market_id)?.book;
     if (!orderbook) {
       throw new Error("Incorrect Market ID");
     }
@@ -1667,19 +1899,21 @@ class Engine {
       price: formatFixed(price),
       released_fee: formatFixed(remaining_order_fee),
     });
-  }
+  };
 
-  private getDepth(request: CommandOf<"GET_DEPTH">): EngineResponse {
-    const orderbook = this.orderbooks.get(request.market_id);
+  private getDepth = (request: CommandOf<"GET_DEPTH">): EngineResponse => {
+    const orderbook = this.markets.get(request.market_id)?.book;
     if (!orderbook) {
       throw new Error("Incorrect Market ID");
     }
 
     const response = orderbook.getDepth();
     return engine_response("Depth fetched successfully", 1, { ...response });
-  }
+  };
 
-  private getPosition(request: CommandOf<"GET_POSITION">): EngineResponse {
+  private getPosition = (
+    request: CommandOf<"GET_POSITION">
+  ): EngineResponse => {
     const account = this.accounts.get(request.user_id);
     if (!account) {
       throw new Error("Incorrect User ID");
@@ -1702,14 +1936,14 @@ class Engine {
       state: position.state,
       liquidation_id: position.liquidation_id,
     };
-    const markPrice = this.markPrices.get(request.market_id);
+    const markPrice = this.markets.get(request.market_id)?.markPrice;
     if (markPrice !== undefined) {
       const riskConfig = this.riskConfig(request.market_id);
       const risk = calculatePositionRisk(
         position,
         markPrice,
         riskConfig.maintenanceMarginRate,
-        riskConfig.liquidationFeeRate,
+        riskConfig.liquidationFeeRate
       );
       Object.assign(response, {
         mark_price: formatFixed(markPrice),
@@ -1717,38 +1951,48 @@ class Engine {
         maintenance_margin: formatFixed(risk.maintenanceMargin),
         estimated_liquidation_fee: formatFixed(risk.estimatedCloseFee),
         liquidation_price: (() => {
-          const price = calculateLiquidationPrice(position, riskConfig.maintenanceMarginRate, riskConfig.liquidationFeeRate);
+          const price = calculateLiquidationPrice(
+            position,
+            riskConfig.maintenanceMarginRate,
+            riskConfig.liquidationFeeRate
+          );
           return price === null ? null : formatFixed(price);
         })(),
       });
     }
 
     return engine_response("Position fetched successfully", 1, { ...response });
-  }
+  };
 
-  private liquidationCheck({
+  private liquidationCheck = ({
     user_id,
     market_id,
   }: {
     user_id: string;
     market_id: string;
-  }) {
-    this.liquidationQueue.set(`${user_id}:${market_id}`, { user_id, market_id });
+  }) => {
+    this.liquidationQueue.set(`${user_id}:${market_id}`, {
+      user_id,
+      market_id,
+    });
     this.drainLiquidationQueue();
-  }
+  };
 
-  private retryActiveLiquidations(market_id: string): void {
-    if (this.haltedMarkets.has(market_id)) return;
-    for (const user_id of this.positionUsersByMarket.get(market_id) ?? []) {
+  private retryActiveLiquidations = (market_id: string): void => {
+    if (this.markets.get(market_id)?.halted) return;
+    for (const user_id of this.markets.get(market_id)?.positionUserIds ?? []) {
       const position = this.accounts.get(user_id)?.positions.get(market_id);
       if (position?.state === PositionState.LIQUIDATING) {
-        this.liquidationQueue.set(`${user_id}:${market_id}`, { user_id, market_id });
+        this.liquidationQueue.set(`${user_id}:${market_id}`, {
+          user_id,
+          market_id,
+        });
       }
     }
     this.drainLiquidationQueue();
-  }
+  };
 
-  private drainLiquidationQueue(): void {
+  private drainLiquidationQueue = (): void => {
     if (this.processingLiquidations) return;
     this.processingLiquidations = true;
     const processed = new Set<string>();
@@ -1758,7 +2002,7 @@ class Engine {
         this.liquidationQueue.delete(key);
         if (processed.has(key)) continue;
         processed.add(key);
-        if (processed.size > 10000) {
+        if (processed.size > ENGINE_CONSTANTS.LIQUIDATION_QUEUE_MAX_PROCESSED) {
           throw new Error("Liquidation cascade exceeds safety limit");
         }
         this.processLiquidation(next);
@@ -1766,20 +2010,20 @@ class Engine {
     } finally {
       this.processingLiquidations = false;
     }
-  }
+  };
 
-  private processLiquidation({
+  private processLiquidation = ({
     user_id,
     market_id,
   }: {
     user_id: string;
     market_id: string;
-  }) {
-    if (this.haltedMarkets.has(market_id)) return;
+  }) => {
+    if (this.markets.get(market_id)?.halted) return;
     const account = this.accounts.get(user_id);
     const position = account?.positions.get(market_id);
     if (!account || !position) return;
-    const orderbook = this.orderbooks.get(market_id);
+    const orderbook = this.markets.get(market_id)?.book;
     if (!orderbook) {
       throw new Error("Incorrect Market ID");
     }
@@ -1790,7 +2034,7 @@ class Engine {
       position,
       mark_price,
       riskConfig.maintenanceMarginRate,
-      riskConfig.liquidationFeeRate,
+      riskConfig.liquidationFeeRate
     );
     position.unrealized_pnl = risk.unrealizedPnl;
 
@@ -1800,14 +2044,16 @@ class Engine {
         this.currentSourceMessageId ?? randomUUID(),
         user_id,
         market_id,
-        0,
+        0
       );
       position.liquidation_attempts += 1;
       //trigger liquidity
       const initial_position_quantity = position.quantity;
-      const liquidation_quantity = riskConfig.maxLiquidationQuantity !== null &&
+      const liquidation_quantity =
+        riskConfig.maxLiquidationQuantity !== null &&
         riskConfig.maxLiquidationQuantity < position.quantity
-        ? riskConfig.maxLiquidationQuantity : position.quantity;
+          ? riskConfig.maxLiquidationQuantity
+          : position.quantity;
 
       // Cancel only resting orders in the liquidated market. Isolated margin
       // and orders in other markets must remain available to the user.
@@ -1822,11 +2068,14 @@ class Engine {
         });
       }
 
+      const liquidationIndex =
+        this.commandEvents?.liquidationOrderSequence ?? 0;
+      if (this.commandEvents) this.commandEvents.liquidationOrderSequence++;
       const order_id = generate_liquidation_order_id(
         this.currentSourceMessageId ?? randomUUID(),
         user_id,
         market_id,
-        this.liquidationOrderSequence++
+        liquidationIndex
       );
 
       const side =
@@ -1876,7 +2125,7 @@ class Engine {
           },
           fill.filled,
           fill.price,
-          riskConfig.liquidationFeeRate,
+          riskConfig.liquidationFeeRate
         );
         total_realized_pnl += economics.realizedPnl;
         fund_settlement_inputs.push({
@@ -1930,7 +2179,7 @@ class Engine {
             liquidation_attempts: 0,
           };
           maker_acc?.positions.set(market_id, maker_position);
-          this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
+          this.markets.get(market_id)?.positionUserIds?.add(maker_acc.user_id);
         }
 
         let maker_position_margin_added = 0n;
@@ -1961,7 +2210,11 @@ class Engine {
               maker_acc.user_id,
               maker_position.reserved_margin
             );
-            this.realizeClosedFunding(maker_acc.user_id, maker_position, maker_position.quantity);
+            this.realizeClosedFunding(
+              maker_acc.user_id,
+              maker_position,
+              maker_position.quantity
+            );
 
             const realizedPnl = calcUnrealisedPnL(
               maker_position.type,
@@ -1973,9 +2226,9 @@ class Engine {
 
             //delete the redundant position
             maker_acc.positions.delete(market_id);
-            this.positionUsersByMarket
+            this.markets
               .get(market_id)
-              ?.delete(maker_acc.user_id);
+              ?.positionUserIds?.delete(maker_acc.user_id);
 
             //========Incase the previous position cancels out and a opposite position is created===========
             if (maker_position.quantity < fill.filled) {
@@ -2009,7 +2262,9 @@ class Engine {
               liquidation_risks.add(fill.maker_user_id);
 
               maker_acc.positions.set(market_id, maker_position);
-              this.positionUsersByMarket.get(market_id)?.add(maker_acc.user_id);
+              this.markets
+                .get(market_id)
+                ?.positionUserIds?.add(maker_acc.user_id);
             }
           } else {
             //========Incase the previous position donot cancels out but reduces===========
@@ -2026,7 +2281,11 @@ class Engine {
             );
 
             maker_position.reserved_margin -= margin_released;
-            this.realizeClosedFunding(maker_acc.user_id, maker_position, fill.filled);
+            this.realizeClosedFunding(
+              maker_acc.user_id,
+              maker_position,
+              fill.filled
+            );
             maker_position.quantity -= fill.filled;
             liquidation_risks.add(fill.maker_user_id);
 
@@ -2074,7 +2333,7 @@ class Engine {
       position.quantity = remaining_liquidation_quantity;
       if (total_uncovered_shortfall > 0n) {
         position.state = PositionState.BANKRUPT;
-        this.haltedMarkets.add(market_id);
+        this.markets.get(market_id)!.halted = true;
       }
 
       if (remaining_liquidation_quantity !== 0n) {
@@ -2087,7 +2346,7 @@ class Engine {
       } else {
         //delete the redundant position
         this.accounts.get(user_id)?.positions.delete(market_id);
-        this.positionUsersByMarket.get(market_id)?.delete(user_id);
+        this.markets.get(market_id)?.positionUserIds?.delete(user_id);
       }
 
       const affected_accounts = Array.from(
@@ -2184,27 +2443,30 @@ class Engine {
           ],
           insurance_fund: insurance_fund_changes,
           trading_fee_account: trading_fee_changes,
-          liquidation_attempts: [{
-            attempt_id: order_id,
-            liquidation_id: position.liquidation_id!,
-            user_id,
-            market_id,
-            status: total_uncovered_shortfall > 0n
-              ? "BANKRUPT"
-              : remaining_liquidation_quantity === 0n
-                ? "COMPLETED"
-                : "LIQUIDATING",
-            attempt: position.liquidation_attempts,
-            initial_quantity: initial_position_quantity,
-            filled_quantity: response.filled,
-            remaining_quantity: remaining_liquidation_quantity,
-            mark_price,
-            realized_pnl: total_realized_pnl,
-            liquidation_fee: total_liquidation_fee,
-            user_refund: total_user_refund,
-            shortfall_covered: total_shortfall_covered,
-            uncovered_shortfall: total_uncovered_shortfall,
-          }],
+          liquidation_attempts: [
+            {
+              attempt_id: order_id,
+              liquidation_id: position.liquidation_id!,
+              user_id,
+              market_id,
+              status:
+                total_uncovered_shortfall > 0n
+                  ? "BANKRUPT"
+                  : remaining_liquidation_quantity === 0n
+                    ? "COMPLETED"
+                    : "LIQUIDATING",
+              attempt: position.liquidation_attempts,
+              initial_quantity: initial_position_quantity,
+              filled_quantity: response.filled,
+              remaining_quantity: remaining_liquidation_quantity,
+              mark_price,
+              realized_pnl: total_realized_pnl,
+              liquidation_fee: total_liquidation_fee,
+              user_refund: total_user_refund,
+              shortfall_covered: total_shortfall_covered,
+              uncovered_shortfall: total_uncovered_shortfall,
+            },
+          ],
         },
       });
 
@@ -2212,15 +2474,15 @@ class Engine {
         this.liquidationCheck({ user_id: affected_user_id, market_id });
       }
     }
-  }
+  };
 
-  private markPriceUpdate(
+  private markPriceUpdate = (
     request: CommandOf<"MARK_PRICE_UPDATE">
-  ): EngineResponse {
+  ): EngineResponse => {
     const { market_id, mark_price, source_timestamp, producer_id, sequence } =
       request;
 
-    if (!this.orderbooks.has(market_id)) {
+    if (!this.markets.has(market_id)) {
       return engine_response("Incorrect Market ID", 0);
     }
 
@@ -2229,7 +2491,7 @@ class Engine {
     }
 
     const parsed_sequence = BigInt(sequence);
-    const latest_metadata = this.markPriceMetadata.get(market_id);
+    const latest_metadata = this.markets.get(market_id)?.markPriceMetadata;
     const now = this.replayTimestamp ?? Date.now();
 
     if (
@@ -2245,20 +2507,27 @@ class Engine {
       return engine_response("Stale mark price update ignored", 0);
     }
 
-    this.markPrices.set(market_id, mark_price);
-    this.markPriceMetadata.set(market_id, {
+    const market = this.markets.get(market_id)!;
+    market.markPrice = mark_price;
+    market.markPriceMetadata = {
       producer_id,
       source_timestamp,
       sequence: parsed_sequence,
-    });
-    const funding = this.fundingStates.get(market_id);
-    const book = this.orderbooks.get(market_id);
-    if (funding && book && funding.fixedRate === null &&
-      this.marketQuotes.get(market_id) === MARKET_CONFIG.COLLATERAL_ASSET) {
+    };
+    const funding = this.markets.get(market_id)?.funding;
+    const book = this.markets.get(market_id)?.book;
+    if (
+      funding &&
+      book &&
+      funding.fixedRate === null &&
+      this.markets.get(market_id)?.quote === MARKET_CONFIG.COLLATERAL_ASSET
+    ) {
       const intervalEnd = fundingIntervalEnd(source_timestamp);
-      if (funding.premiumIntervalMs === 0 ||
+      if (
+        funding.premiumIntervalMs === 0 ||
         (intervalEnd > funding.premiumIntervalMs &&
-          funding.lastSettledIntervalMs >= funding.premiumIntervalMs)) {
+          funding.lastSettledIntervalMs >= funding.premiumIntervalMs)
+      ) {
         funding.premiumIntervalMs = intervalEnd;
         funding.premiumSum = 0n;
         funding.premiumSamples = 0;
@@ -2268,7 +2537,8 @@ class Engine {
         if (premium !== null) {
           funding.premiumSum += premium;
           funding.premiumSamples += 1;
-          if (funding.premiumSamples % 10 === 0) this.emitFundingState(market_id);
+          if (funding.premiumSamples % 10 === 0)
+            this.emitFundingState(market_id);
         }
       }
     }
@@ -2278,7 +2548,7 @@ class Engine {
       changes: { market_data: [{ market_id, mark_price }] },
     });
 
-    const users_with_position = this.positionUsersByMarket.get(market_id);
+    const users_with_position = this.markets.get(market_id)?.positionUserIds;
 
     if (!users_with_position?.size) {
       return engine_response("No positions to recalibrate", 1, {
@@ -2290,7 +2560,7 @@ class Engine {
       this.liquidationCheck({ user_id, market_id });
     }
     return engine_response("Positions recalibrated successfully", 1, null);
-  }
+  };
 }
 
 export default Engine;
