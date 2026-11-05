@@ -5,6 +5,7 @@ import {
   type PrivateAccountEvent,
 } from "commons/src/engine-event";
 import type { WSEvent } from "./z";
+import CONFIG from "./config";
 
 const STREAM = "engine-events";
 const GROUP = "websocket";
@@ -14,8 +15,10 @@ const PRIVATE_GROUP = "private-websocket";
 const PRIVATE_CONSUMER = "private-ws-consumer-1";
 
 class RedisHandler {
-  private client: RedisClientType = createClient();
-  private privateClient: RedisClientType = createClient();
+  private client: RedisClientType = createClient({ url: CONFIG.redisUrl });
+  private privateClient: RedisClientType = createClient({
+    url: CONFIG.redisUrl,
+  });
 
   private async connect(): Promise<void> {
     if (!this.client.isOpen) {
@@ -28,9 +31,14 @@ class RedisHandler {
 
   private async createPrivateGroup(): Promise<void> {
     try {
-      await this.privateClient.xGroupCreate(PRIVATE_STREAM, PRIVATE_GROUP, "0", {
-        MKSTREAM: true,
-      });
+      await this.privateClient.xGroupCreate(
+        PRIVATE_STREAM,
+        PRIVATE_GROUP,
+        "0",
+        {
+          MKSTREAM: true,
+        }
+      );
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("BUSYGROUP")) {
         throw error;
@@ -48,6 +56,7 @@ class RedisHandler {
     }
   }
 
+  //read data from stream and call socket function to share market public data
   public async readEvents(
     onEvent: (event: WSEvent) => Promise<void>
   ): Promise<void> {
@@ -90,6 +99,7 @@ class RedisHandler {
     }
   }
 
+  //read data from stream and call socket function to share market private data
   public async readPrivateEvents(
     onEvent: (event: PrivateAccountEvent) => Promise<void>
   ): Promise<void> {
