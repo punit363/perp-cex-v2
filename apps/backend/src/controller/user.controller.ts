@@ -2,16 +2,25 @@ import type { RequestToEngine, EngineResponse } from "commons/src";
 import { handleError, handleResponse } from "../utils/handler";
 import { loopback } from "../loopback";
 import type { Request, Response } from "express";
+import CONFIG from "../config";
 
 async function on_ramp(req: Request, res: Response) {
   try {
     const user_id = req.user_id as string;
-    const request = req.body;
+    const amount = req.body?.amount;
+    if (typeof amount !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(amount)) {
+      return res.status(400).json(handleError("Enter a positive amount with up to 8 decimal places.", 0));
+    }
+    const [whole, fraction = ""] = amount.split(".");
+    const scaled = BigInt(whole!) * 100_000_000n + BigInt(fraction.padEnd(8, "0"));
+    if (scaled <= 0n || scaled > CONFIG.demo_max_top_up) {
+      return res.status(400).json(handleError("Amount exceeds the allowed demo top-up.", 0));
+    }
 
     const engine_request: RequestToEngine = {
       action: "ONRAMP",
       user_id,
-      amount: request.amount,
+      amount,
     };
 
     const engine_response = await loopback(engine_request) as EngineResponse;

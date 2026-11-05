@@ -4,10 +4,12 @@ import cors from "cors";
 import apiRouter from "./routes";
 
 const app = express();
-app.use(cors({ origin: "*" }));
-app.use(express.json());
+// Caddy is the sole public entry point and replaces client-supplied forwarded headers.
+app.set("trust proxy", 1);//trust 1 proxy hop (client->loadb.) , 2 inlcudes cdn
+app.use(cors({ origin: CONFIG.cors_origins }));
+app.use(express.json({ limit: "16kb" }));
 
-const PORT = Number(CONFIG.port || 8000);
+const PORT = CONFIG.port;
 
 app.use("/api/v1",apiRouter);
 
