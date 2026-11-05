@@ -26,7 +26,5 @@
     "apps/*",
     "packages/*"
   ],
-  "dependencies": {
-    "prisma": "^8.0.0-rc.23"
-  }
+  "dependencies": {}
 }
