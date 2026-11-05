@@ -1,0 +1,143 @@
+x-runtime: &runtime
+  image: apex-runtime:local
+  restart: unless-stopped
+  environment: &runtime-environment
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    REDIS_URL: redis://redis:6379
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-apex}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  migrate:
+    <<: *runtime
+    build:
+      context: .
+      target: runtime
+    restart: "no"
+    working_dir: /app/packages/db
+    command: ["bun", "./node_modules/prisma/build/index.js", "migrate", "deploy", "--config", "prisma7.config.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    <<: *runtime
+    restart: "no"
+    working_dir: /app/packages/db
+    command: ["bun", "seed-markets.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  engine:
+    <<: *runtime
+    command: ["bun", "apps/engine/src/index.ts"]
+    environment:
+      <<: *runtime-environment
+      ENGINE_SNAPSHOT_PATH: /var/lib/apex/snapshot.json
+    volumes:
+      - engine_state:/var/lib/apex
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  database:
+    <<: *runtime
+    command: ["bun", "apps/database/src/index.ts"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  market_data:
+    <<: *runtime
+    command: ["bun", "apps/market_data/src/index.ts"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  backend:
+    <<: *runtime
+    command: ["bun", "apps/backend/src/index.ts"]
+    environment:
+      <<: *runtime-environment
+      API_PORT: "8000"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
+      DEMO_MAX_TOP_UP: ${DEMO_MAX_TOP_UP:-10000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  ws:
+    <<: *runtime
+    command: ["bun", "apps/ws/src/index.ts"]
+    environment:
+      <<: *runtime-environment
+      WS_PORT: "7001"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+    depends_on:
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  web:
+    image: apex-web:local
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${WEB_HTTP_PORT:-80}:80"
+      - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_started
+      ws:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  engine_state:
+  caddy_data:
+  caddy_config:

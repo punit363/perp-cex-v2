@@ -1,0 +1,14 @@
+.git
+.turbo
+.taste-skill
+**/node_modules
+**/dist
+packages/db/generated
+**/.env
+**/.env.*
+**/snapshot.json
+tests
+coverage
+backups
+*.log
+.DS_Store
