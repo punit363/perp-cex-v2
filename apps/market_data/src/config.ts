@@ -1,0 +1,26 @@
+const CONFIG = {
+  redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
+  engineStream: "engine",
+  scale: 100_000_000n,
+  venues: ["coinbase", "kraken"] as const,
+  anchors: ["USD", "USDT"] as const,
+  coinbaseWebSocketUrl: "wss://ws-feed.exchange.coinbase.com",
+  coinbaseBookUrl: "https://api.exchange.coinbase.com/products",
+  krakenWebSocketUrl: "wss://ws.kraken.com/v2",
+  sampleIntervalMs: 1_000,
+  fundingIntervalMs: 8 * 60 * 60 * 1_000,
+  coinbasePollIntervalMs: 200,
+  coinbaseMaxQuoteAgeMs: 15_000,
+  maxConnectionAgeMs: 5_000,
+  discoveryTimeoutMs: 30_000,
+  reconnectDelayMs: 3_000,
+  marketRefreshMs: 5_000,
+  coinbaseRequestTimeoutMs: 4_000,
+  quoteFutureToleranceMs: 1_000,
+  coinbaseWarningIntervalMs: 10_000,
+  unavailableWarningAfterMs: 20_000,
+  fundingRetryMs: 10_000,
+  fundingFinalityDelayMs: 60_000,
+};
+
+export default CONFIG;

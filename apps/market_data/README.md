@@ -1,5 +1,14 @@
 # Mark price producer
 
+## Code layout
+
+- `src/index.ts` starts the service and refreshes the market list.
+- `src/sources.ts` owns Coinbase and Kraken connections, subscriptions, health checks, and Coinbase book polling.
+- `src/market_data.ts` stores discovered products and normalized venue quotes.
+- `src/catalog.ts`, `src/price_utils.ts`, and `src/pricing.ts` parse source data and calculate fixed-point mark prices.
+- `src/publisher.ts` sends mark updates and funding settlement requests through `src/redis.ts`.
+- `src/config.ts` holds source URLs, intervals, freshness limits, and the Redis URL.
+
 Seed markets, then run `bun src/index.ts` with Postgres and Redis available.
 The producer reads the listed market IDs from the database and discovers live
 spot products from Coinbase and Kraken. It sends one mark-price update per

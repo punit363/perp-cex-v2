@@ -1,6 +1,6 @@
-export type SpotVenue = "coinbase" | "kraken";
+type SpotVenue = "coinbase" | "kraken";
 
-export interface SpotQuote {
+interface SpotQuote {
   market_id: string;
   venue: SpotVenue;
   source_symbol: string;
@@ -11,7 +11,7 @@ export interface SpotQuote {
   source_sequence: string | null;
 }
 
-export interface MarkPriceUpdate {
+interface MarkPriceUpdate {
   action: "MARK_PRICE_UPDATE";
   market_id: string;
   mark_price: string;
@@ -19,3 +19,9 @@ export interface MarkPriceUpdate {
   producer_id: string;
   sequence: string;
 }
+
+type Product = { symbol: string; base: string; quote: string; status: string };
+type Book = { bids: Set<bigint>; asks: Set<bigint> };
+type Prices = { bid: bigint; ask: bigint };
+
+export type { Product, Book, Prices, SpotVenue, SpotQuote, MarkPriceUpdate };
