@@ -502,6 +502,7 @@ class Engine {
     const timestampMs = sourceTimestamp ?? replayTimestamp ?? Date.now();
 
     //group of events that occur in engine which are pushed to different services
+    //on each engine command a fresh empty event issue is created
     const events = {
       db: [] as DBEventDraft[],
       ws: [] as WSEventDraft[],
@@ -1237,6 +1238,7 @@ class Engine {
       let trading_fee_change: DBEventDraft["changes"]["trading_fee_account"] =
         [];
       let market_position_margin_added = 0n;
+
       if (result.fills.length > 0) {
         let taker_acc = this.accounts.get(user_id);
         if (!taker_acc) {
@@ -1245,17 +1247,19 @@ class Engine {
 
         const order_position_type =
           order.side == OrderSide.SELL ? PositionType.SHORT : PositionType.LONG;
-        let taker_remaining = quantity - order.filled;
+        let taker_remaining = quantity - order.filled; // remaining amount before the order was placed
 
         const liquidation_risks = new Set<string>();
-        const fee_charges: Parameters<TradingFeeAccount["collect"]>[0] = [];
+        const fee_charges: Parameters<TradingFeeAccount["collect"]>[0] = []; //array of arguments for collect method of tradingfeeaccount
 
         for (const fill of result.fills) {
+          //reduce taker fee and maker fee from reserved
           this.accounts.debitMargin(fill.taker_user_id, fill.taker_fee);
           this.accounts.debitMargin(
             fill.maker_user_id,
             fill.maker_order_fee_consumed
           );
+          //push both fees
           fee_charges.push(
             {
               trade_id: fill.trade_id,
@@ -1280,6 +1284,7 @@ class Engine {
             leverage
           );
           taker_remaining -= fill.filled;
+          //margin consumed after each fill
           const taker_order_margin_consumed =
             taker_margin_before -
             calculateInitialMargin(
@@ -1287,9 +1292,7 @@ class Engine {
               leverage
             );
 
-          // A user's own buy and sell cancel economically. Keep the trade and
-          // both fees, but release the filled order margin without touching
-          // their existing position.
+          //if taker and maker are same then no position is created hence order margin is released
           if (fill.taker_user_id === fill.maker_user_id) {
             if (order.type === OrderType.LIMIT) {
               this.settleFilledOrderMargin(
@@ -1310,7 +1313,6 @@ class Engine {
           }
 
           let taker_position_margin_added = 0n;
-
           //========Update Taker Position===========
           let taker_position = taker_acc.positions.get(market_id);
 
@@ -1347,15 +1349,15 @@ class Engine {
               fill.filled
             );
             taker_position.quantity += fill.filled;
-
+            //add taker_user_id to check for liquidation risk later
             liquidation_risks.add(fill.taker_user_id);
-            //========Taker Position and Current Order are opposite side===========
           } else {
+            //========Taker Position and Current Order are opposite side===========
             if (taker_position.quantity <= fill.filled) {
               //========Incase the previous position cancels out===========
               const rem_qty = fill.filled - taker_position.quantity;
 
-              //release the prev margin + realise the PnL
+              //release the prev margin + realise the PnL for old position
               this.accounts.releaseMargin(
                 taker_acc.user_id,
                 taker_position.reserved_margin
@@ -1395,6 +1397,7 @@ class Engine {
                   liquidation_attempts: 0,
                 };
 
+                //new margin for qty remaining after closing position
                 const margin_reserved = calculateInitialMargin(
                   calculateNotional(fill.price, rem_qty),
                   leverage
@@ -1446,8 +1449,10 @@ class Engine {
           }
 
           if (order.type === OrderType.MARKET) {
+            //bcoz market order has an estimated margin before order and the actual margin might vary
             market_position_margin_added += taker_position_margin_added;
           } else {
+            //update collateral for taker bassed on margin
             this.settleFilledOrderMargin(
               taker_acc.user_id,
               taker_order_margin_consumed,
@@ -1612,17 +1617,17 @@ class Engine {
           );
         }
 
-        this.tradingFeeAccount ??= new TradingFeeAccount(
-          MARKET_CONFIG.COLLATERAL_ASSET
-        );
+        // Record the maker and taker fees debited during the fills.
         const fee_settlement = this.tradingFeeAccount.collect(fee_charges);
         trading_fee_change = [fee_settlement];
 
+        // Check each affected user's position after all fills are settled.
         for (const affected_user_id of liquidation_risks) {
           this.liquidationCheck({ user_id: affected_user_id, market_id });
         }
       }
 
+      //release extra market order margin
       if (
         order.type === OrderType.MARKET &&
         initial_margin > market_position_margin_added
@@ -1633,10 +1638,12 @@ class Engine {
         );
       }
 
+      //release extra reserved fee
       if (unusedFeeReserve > 0n) {
         this.accounts.releaseMargin(user_id, unusedFeeReserve);
       }
 
+      //update order in db
       const order_db_update: NonNullable<DBEventInput["changes"]["orders"]> = [
         {
           order_id: result.order.order_id,
@@ -1669,10 +1676,13 @@ class Engine {
         },
       ];
 
+      //incase a user went to liquidation during order
       const cancellation_events =
         this.commandEvents?.db.filter(
           (event) => event.event_type === "CANCEL_ORDER"
         ) ?? [];
+
+      //all affected users due to this order
       const affected_user_ids = new Set([
         user_id,
         ...result.fills.map((fill) => fill.maker_user_id),
@@ -1686,12 +1696,14 @@ class Engine {
       const positions_db_update: NonNullable<
         DBEventInput["changes"]["positions"]
       > = [];
+
       for (const affected_user_id of affected_user_ids) {
         const affected_account = this.accounts.get(affected_user_id);
         if (!affected_account) {
           throw new Error(`Account not registered: ${affected_user_id}`);
         }
 
+        //update balances of all affected users
         balance_db_update.push({
           user_id: affected_user_id,
           available: affected_account.collateral.available,
@@ -1699,6 +1711,7 @@ class Engine {
         });
 
         if (result.fills.length > 0) {
+          //update positions of all affected users
           const position = affected_account.positions.get(market_id);
           positions_db_update.push({
             user_id: affected_user_id,
@@ -1720,6 +1733,7 @@ class Engine {
         }
       }
 
+      //update new fills
       const fills_db_update: NonNullable<DBEventInput["changes"]["fills"]> =
         result.fills.map((fill_item: Fill) => ({
           trade_id: fill_item.trade_id,
@@ -1778,6 +1792,7 @@ class Engine {
         }),
       };
 
+      //add this to db command events array
       this.emitDbEvent({
         event_type: "PLACE_ORDER",
         changes: {
@@ -1792,15 +1807,17 @@ class Engine {
           trading_fee_account: trading_fee_change,
         },
       });
-      const eventsBeforeRetry = this.commandEvents?.db.length ?? 0;
-      this.retryActiveLiquidations(market_id);
 
-      // A newly resting order may be consumed by a liquidation in the same
-      // command. Include those maker fills in the placement response.
+      const eventsBeforeRetry = this.commandEvents?.db.length ?? 0;
+      this.retryActiveLiquidations(market_id); //attempt liquidation on existing pending liquidation positions
+
+      // Include retry fills that consumed the newly placed maker order.
       const retryFills = (this.commandEvents?.db.slice(eventsBeforeRetry) ?? [])
         .flatMap((event) => event.changes.fills ?? [])
         .filter((fill) => fill.maker_order_id === result.order.order_id);
+
       if (retryFills.length) {
+        //update response data with new fills
         const finalFilled =
           result.order.filled +
           retryFills.reduce((sum, fill) => sum + BigInt(fill.filled), 0n);
@@ -1811,6 +1828,7 @@ class Engine {
         response.order.remaining_order_fee = formatFixed(
           BigInt(lastFill.maker_order_fee_remaining)
         );
+        //push new fills to existing
         response.fills.push(
           ...retryFills.map((fill) => ({
             trade_id: fill.trade_id,
@@ -1854,11 +1872,11 @@ class Engine {
     this.markBookChanged(request.market_id);
 
     const { order_id, rem_qty, price, leverage } = cancelResult;
-    const notional = calculateNotional(price, rem_qty);
-    const initial_margin = calculateInitialMargin(notional, leverage);
+    const net_amt = calculateNotional(price, rem_qty);
+    const initial_margin = calculateInitialMargin(net_amt, leverage);
     const remaining_order_fee = calculateFee(
-      notional,
-      this.MAKER_FEE_RATE ?? 0n
+      net_amt,
+      this.MAKER_FEE_RATE ?? 0n //maker fee coz after order placed we remove the taker fee
     );
     this.accounts.releaseMargin(
       request.user_id,
@@ -1911,6 +1929,7 @@ class Engine {
     return engine_response("Depth fetched successfully", 1, { ...response });
   };
 
+  //fetches position for a user also new data with the latest mark price
   private getPosition = (
     request: CommandOf<"GET_POSITION">
   ): EngineResponse => {
@@ -1964,6 +1983,7 @@ class Engine {
     return engine_response("Position fetched successfully", 1, { ...response });
   };
 
+  //adds the user's current market position to liquidation check queue and attempts liquidation all queue
   private liquidationCheck = ({
     user_id,
     market_id,
@@ -1978,6 +1998,7 @@ class Engine {
     this.drainLiquidationQueue();
   };
 
+  // Retry positions already liquidating in this market.
   private retryActiveLiquidations = (market_id: string): void => {
     if (this.markets.get(market_id)?.halted) return;
     for (const user_id of this.markets.get(market_id)?.positionUserIds ?? []) {
@@ -1992,6 +2013,7 @@ class Engine {
     this.drainLiquidationQueue();
   };
 
+  //liquidate each entry in liquidation queue
   private drainLiquidationQueue = (): void => {
     if (this.processingLiquidations) return;
     this.processingLiquidations = true;
@@ -2012,6 +2034,7 @@ class Engine {
     }
   };
 
+  //liquidate positions
   private processLiquidation = ({
     user_id,
     market_id,
@@ -2030,6 +2053,7 @@ class Engine {
 
     const mark_price = this.requireFreshMarkPrice(market_id);
     const riskConfig = this.riskConfig(market_id);
+    //verify position risk with latest market data
     const risk = calculatePositionRisk(
       position,
       mark_price,
@@ -2038,13 +2062,17 @@ class Engine {
     );
     position.unrealized_pnl = risk.unrealizedPnl;
 
+    //trigger liquidity
     if (risk.liquidatable || position.state === PositionState.LIQUIDATING) {
+      const sourceMessageId = this.currentSourceMessageId;
+      if (!sourceMessageId) {
+        throw new Error("Cannot liquidate without a source message ID");
+      }
       position.state = PositionState.LIQUIDATING;
       position.liquidation_id =
         position.liquidation_id ??
         generate_liquidation_id(sourceMessageId, user_id, market_id);
       position.liquidation_attempts += 1;
-      //trigger liquidity
       const initial_position_quantity = position.quantity;
       const liquidation_quantity =
         riskConfig.maxLiquidationQuantity !== null &&
@@ -2052,19 +2080,14 @@ class Engine {
           ? riskConfig.maxLiquidationQuantity
           : position.quantity;
 
-      // Cancel only resting orders in the liquidated market. Isolated margin
-      // and orders in other markets must remain available to the user.
+      // Cancel only resting orders in the liquidated market.
+      // Isolated margin and orders in other markets must remain available to the user.
       for (const open_order_id of [...account.orders]) {
         if (!orderbook.hasOrder(open_order_id)) continue;
-
         this.cancelOrder({
           action: "CANCEL_ORDER",
           user_id,
           order_id: open_order_id,
-      const sourceMessageId = this.currentSourceMessageId;
-      if (!sourceMessageId) {
-        throw new Error("Cannot liquidate without a source message ID");
-      }
           market_id,
         });
       }
@@ -2077,6 +2100,7 @@ class Engine {
       const side =
         position.type == PositionType.LONG ? OrderSide.SELL : OrderSide.BUY;
 
+      // Match an opposing order to close the position.
       const response = orderbook.matchToClose(
         user_id,
         order_id,
@@ -2088,7 +2112,7 @@ class Engine {
         this.emitTrades(market_id, side, response.fills);
       }
 
-      const liquidation_risks = new Set<string>();
+      const liquidation_risks = new Set<string>(); //set of user under liquidation risk
       let remaining_liquidation_quantity = position.quantity;
       let remaining_position_margin = position.reserved_margin;
       let remaining_funding = position.funding_accrued;
@@ -2098,21 +2122,26 @@ class Engine {
       let total_user_refund = 0n;
       let total_shortfall_covered = 0n;
       let total_uncovered_shortfall = 0n;
-      const fund_settlement_inputs: Array<{
+
+      //data for insurance fund to either take its cut or settle the debt
+      const fund_settlement_inputs: {
         entry_id_prefix: string;
         market_id: string;
         user_id: string;
         liquidation_order_id: string;
         execution_equity: bigint;
         requested_liquidation_fee: bigint;
-      }> = [];
+      }[] = [];
+      //db update for insurance fund
       const insurance_fund_changes: DBEventDraft["changes"]["insurance_fund"] =
         [];
+
+      //liquidation fee collected by exchange
       const liquidation_fee_charges: Parameters<
         TradingFeeAccount["collect"]
       >[0] = [];
       response?.fills.forEach((fill: Fill) => {
-        const economics = calculateLiquidationFill(
+        const fill_liq_economics = calculateLiquidationFill(
           {
             ...position,
             quantity: remaining_liquidation_quantity,
@@ -2123,18 +2152,18 @@ class Engine {
           fill.price,
           riskConfig.liquidationFeeRate
         );
-        total_realized_pnl += economics.realizedPnl;
+        total_realized_pnl += fill_liq_economics.realizedPnl;
         fund_settlement_inputs.push({
           entry_id_prefix: `${order_id}:${fill.trade_id}`,
           market_id,
           user_id,
           liquidation_order_id: order_id,
-          execution_equity: economics.executionEquity,
-          requested_liquidation_fee: economics.requestedFee,
+          execution_equity: fill_liq_economics.executionEquity,
+          requested_liquidation_fee: fill_liq_economics.requestedFee,
         });
-        consumed_position_margin += economics.allocatedMargin;
-        remaining_position_margin -= economics.allocatedMargin;
-        remaining_funding -= economics.allocatedFunding;
+        consumed_position_margin += fill_liq_economics.allocatedMargin;
+        remaining_position_margin -= fill_liq_economics.allocatedMargin;
+        remaining_funding -= fill_liq_economics.allocatedFunding;
         remaining_liquidation_quantity -= fill.filled;
 
         //handle maker position
@@ -2206,6 +2235,7 @@ class Engine {
               maker_acc.user_id,
               maker_position.reserved_margin
             );
+            // Realize accrued funding for the closed part of the maker position.
             this.realizeClosedFunding(
               maker_acc.user_id,
               maker_position,
@@ -2277,6 +2307,7 @@ class Engine {
             );
 
             maker_position.reserved_margin -= margin_released;
+            // Realize accrued funding for the closed part of the maker position.
             this.realizeClosedFunding(
               maker_acc.user_id,
               maker_position,
@@ -2320,9 +2351,8 @@ class Engine {
         ? [this.tradingFeeAccount.collect(liquidation_fee_charges)]
         : [];
 
-      // Liquidation consumes the portion of isolated margin assigned to fills.
-      // Positive execution equity is returned after the liquidation fee; the
-      // insurance fund receives that fee and covers negative execution equity.
+      // Liquidation consumes the portion of isolated margin assigned to fills. Positive execution equity is returned after the liquidation fee
+      // the insurance fund receives that fee and covers negative execution equity.
       this.accounts.debitMargin(user_id, consumed_position_margin);
       position.reserved_margin = remaining_position_margin;
       position.funding_accrued = remaining_funding;
@@ -2418,6 +2448,7 @@ class Engine {
         };
       });
 
+      //update db with market and user state after liquidation
       this.emitDbEvent({
         event_type: "LIQUIDATION",
         changes: {
@@ -2490,6 +2521,7 @@ class Engine {
     const latest_metadata = this.markets.get(market_id)?.markPriceMetadata;
     const now = this.replayTimestamp ?? Date.now();
 
+    //reject markprice is it older than set duration or if sequence or timestamp is older than current one
     if (
       source_timestamp < now - this.MAX_MARK_PRICE_AGE_MS ||
       (latest_metadata &&
@@ -2501,7 +2533,7 @@ class Engine {
     }
 
     const market = this.markets.get(market_id)!;
-    market.markPrice = mark_price;
+    market.markPrice = mark_price;//update the new mark price
     market.markPriceMetadata = {
       producer_id,
       source_timestamp,
@@ -2509,6 +2541,7 @@ class Engine {
     };
     const funding = this.markets.get(market_id)?.funding;
     const book = this.markets.get(market_id)?.book;
+
     if (
       funding &&
       book &&
@@ -2517,7 +2550,6 @@ class Engine {
     ) {
       const intervalEnd = fundingIntervalEnd(source_timestamp);
       if (
-    //reject markprice is it older than set duration or if sequence or timestamp is older than current one
         funding.premiumIntervalMs === 0 ||
         (intervalEnd > funding.premiumIntervalMs &&
           funding.lastSettledIntervalMs >= funding.premiumIntervalMs)
@@ -2536,7 +2568,9 @@ class Engine {
         }
       }
     }
+
     this.commandEvents?.changedTickers.add(market_id);
+    //update db with the new mark price
     this.emitDbEvent({
       event_type: "MARK_PRICE_UPDATE",
       changes: { market_data: [{ market_id, mark_price }] },
@@ -2550,6 +2584,7 @@ class Engine {
       });
     }
 
+    //perform liquidation check on all users holding a position in this market
     for (const user_id of users_with_position) {
       this.liquidationCheck({ user_id, market_id });
     }
