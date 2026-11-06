@@ -68,7 +68,6 @@ class Engine {
   >(); //pending liquidations in this market
   private processingLiquidations = false; //flags true everytime there is a pending liquidation
   private readonly MAX_MARK_PRICE_AGE_MS;
-  private readonly MAX_MARK_PRICE_CLOCK_SKEW_MS;
   private MAINTENANCE_MARGIN_RATE: bigint;
   private readonly LIQUIDATION_FEE_RATE: bigint;
   private readonly MAKER_FEE_RATE: bigint;
@@ -99,8 +98,6 @@ class Engine {
       ])
     );
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
-    this.MAX_MARK_PRICE_CLOCK_SKEW_MS =
-      MARKET_CONFIG.MAX_MARK_PRICE_CLOCK_SKEW_MS;
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
     this.LIQUIDATION_FEE_RATE = MARKET_CONFIG.LIQUIDATION_FEE_RATE;
     this.MAKER_FEE_RATE = MARKET_CONFIG.MAKER_FEE_RATE;
@@ -2496,12 +2493,9 @@ class Engine {
 
     if (
       source_timestamp < now - this.MAX_MARK_PRICE_AGE_MS ||
-      source_timestamp > now + this.MAX_MARK_PRICE_CLOCK_SKEW_MS ||
       (latest_metadata &&
         (source_timestamp < latest_metadata.source_timestamp ||
           (producer_id === latest_metadata.producer_id &&
-            parsed_sequence <= latest_metadata.sequence) ||
-          (source_timestamp === latest_metadata.source_timestamp &&
             parsed_sequence <= latest_metadata.sequence)))
     ) {
       return engine_response("Stale mark price update ignored", 0);
@@ -2524,6 +2518,7 @@ class Engine {
     ) {
       const intervalEnd = fundingIntervalEnd(source_timestamp);
       if (
+    //reject markprice is it older than set duration or if sequence or timestamp is older than current one
         funding.premiumIntervalMs === 0 ||
         (intervalEnd > funding.premiumIntervalMs &&
           funding.lastSettledIntervalMs >= funding.premiumIntervalMs)
