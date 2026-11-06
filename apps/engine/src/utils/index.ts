@@ -17,17 +17,22 @@ const min = (a: bigint, b: bigint) => {
 const generate_trade_id = (taker_order_id: string, fill_index: number) =>
   `tr_${taker_order_id}_${fill_index}`;
 
-const generate_liquidation_order_id = (
+const generate_liquidation_id = (
   source_message_id: string,
   user_id: string,
-  market_id: string,
-  liquidation_index: number
-) => `odr_liq_${source_message_id}_${liquidation_index}_${user_id}_${market_id}`;
+  market_id: string
+) => `liq_${source_message_id}_${user_id}_${market_id}`;
+
+const generate_liquidation_attempt_order_id = (
+  liquidation_id: string,
+  attempt: number
+) => `odr_${liquidation_id}_${attempt}`;
 
 export {
   engine_response,
   max,
   min,
   generate_trade_id,
-  generate_liquidation_order_id,
+  generate_liquidation_id,
+  generate_liquidation_attempt_order_id,
 };

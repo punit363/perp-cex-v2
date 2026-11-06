@@ -23,7 +23,12 @@ import {
   type MarketRiskConfig,
   type WSEventDraft,
 } from "./types";
-import { engine_response, generate_liquidation_order_id, max } from "./utils";
+import {
+  engine_response,
+  generate_liquidation_id,
+  generate_liquidation_attempt_order_id,
+  max,
+} from "./utils";
 import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
 import AccountStore from "./accounts";
@@ -86,7 +91,6 @@ class Engine {
     changedTickers: Set<string>; //set of markets which had a change in their tickerdata
     candles: Map<string, CandleDraft>;
     timestampMs: number;
-    liquidationOrderSequence: number;
   } | null = null;
 
   private constructor(markets: MarketDefinition[]) {
@@ -505,7 +509,6 @@ class Engine {
       changedTickers: new Set<string>(), //market_id for those who had a trade compelted
       candles: new Map<string, CandleDraft>(),
       timestampMs,
-      liquidationOrderSequence: 0,
     };
     this.commandEvents = events;
     this.currentSourceMessageId = sourceMessageId ?? randomUUID();
@@ -2037,12 +2040,9 @@ class Engine {
 
     if (risk.liquidatable || position.state === PositionState.LIQUIDATING) {
       position.state = PositionState.LIQUIDATING;
-      position.liquidation_id ??= generate_liquidation_order_id(
-        this.currentSourceMessageId ?? randomUUID(),
-        user_id,
-        market_id,
-        0
-      );
+      position.liquidation_id =
+        position.liquidation_id ??
+        generate_liquidation_id(sourceMessageId, user_id, market_id);
       position.liquidation_attempts += 1;
       //trigger liquidity
       const initial_position_quantity = position.quantity;
@@ -2061,18 +2061,17 @@ class Engine {
           action: "CANCEL_ORDER",
           user_id,
           order_id: open_order_id,
+      const sourceMessageId = this.currentSourceMessageId;
+      if (!sourceMessageId) {
+        throw new Error("Cannot liquidate without a source message ID");
+      }
           market_id,
         });
       }
 
-      const liquidationIndex =
-        this.commandEvents?.liquidationOrderSequence ?? 0;
-      if (this.commandEvents) this.commandEvents.liquidationOrderSequence++;
-      const order_id = generate_liquidation_order_id(
-        this.currentSourceMessageId ?? randomUUID(),
-        user_id,
-        market_id,
-        liquidationIndex
+      const order_id = generate_liquidation_attempt_order_id(
+        position.liquidation_id,
+        position.liquidation_attempts
       );
 
       const side =
