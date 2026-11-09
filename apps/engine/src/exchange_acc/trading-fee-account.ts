@@ -2,10 +2,11 @@ import type {
   SnapshotTradingFeeAccount,
   TradingFeeSettlement,
   FeeCharge,
-} from "./types";
+} from "../types";
 
 class TradingFeeAccount {
   private balance: bigint;
+  // Fees retained by the exchange after the insurance fund share.
   private totalMakerFees: bigint;
   private totalTakerFees: bigint;
 
@@ -23,6 +24,7 @@ class TradingFeeAccount {
     this.totalTakerFees = snapshot ? BigInt(snapshot.total_taker_fees) : 0n;
   }
 
+  //collects half of trading fee
   collect = (charges: FeeCharge[]): TradingFeeSettlement => {
     const entries = charges
       .filter((charge) => charge.amount > 0n)
@@ -36,7 +38,7 @@ class TradingFeeAccount {
         return {
           entry_id: `${charge.trade_id}:${charge.role}`,
           ...charge,
-          balance_after: this.balance
+          balance_after: this.balance,
         };
       });
 
@@ -45,7 +47,7 @@ class TradingFeeAccount {
       balance: this.balance,
       total_maker_fees: this.totalMakerFees,
       total_taker_fees: this.totalTakerFees,
-      entries
+      entries,
     };
   };
 
@@ -54,7 +56,7 @@ class TradingFeeAccount {
       collateral_asset: this.collateralAsset,
       balance: String(this.balance),
       total_maker_fees: String(this.totalMakerFees),
-      total_taker_fees: String(this.totalTakerFees)
+      total_taker_fees: String(this.totalTakerFees),
     };
   };
 }

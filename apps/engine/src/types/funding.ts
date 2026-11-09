@@ -3,8 +3,8 @@ import type { Position, UserAccount } from "./account";
 export type FundingState = {
   lastSettledIntervalMs: number;
   fixedRate: bigint | null;
-  premiumSum: bigint;
-  premiumSamples: number;
+  premiumSum: bigint;// sum of all the premium sample whose funding rate is to be averaged
+  premiumSamples: number; // no of premium samples
   premiumIntervalMs: number;
   lastRate: bigint;
 };

@@ -7,7 +7,7 @@ import type { EngineResponse } from "commons/src/index";
 import { RequestToEngineSchema } from "./zod/z";
 import type { EngineCommand, EngineCommandResult } from "./types";
 import RUNTIME_CONFIG from "./config/runtime.config";
-import { REDIS_CONSTANTS } from "./constants";
+import { REDIS_CONSTANTS } from "./config/constants";
 
 const compareStreamIds = (a: string, b: string): number => {
   const [aTime, aSequence] = a.split("-");
@@ -106,6 +106,10 @@ class RedisHandler {
   ) => {
     await this.connect();
     let lastAppliedStreamId = initialStreamId;
+    const markApplied = (streamId: string) => {
+      onApplied(streamId);
+      lastAppliedStreamId = streamId;
+    };
     const applyMessage = async (
       message: { id: string; message: Record<string, string> },
       replay: boolean
@@ -115,8 +119,7 @@ class RedisHandler {
         raw_request = JSON.parse(String(message.message.request));
       } catch {
         console.error(`Invalid engine request JSON at stream ID ${message.id}`);
-        onApplied(message.id);
-        lastAppliedStreamId = message.id;
+        markApplied(message.id);
         return;
       }
       if (
@@ -124,8 +127,7 @@ class RedisHandler {
         raw_request === null ||
         Array.isArray(raw_request)
       ) {
-        onApplied(message.id);
-        lastAppliedStreamId = message.id;
+        markApplied(message.id);
         return;
       }
 
@@ -137,8 +139,7 @@ class RedisHandler {
       const parseResult = RequestToEngineSchema.safeParse(request_to_engine);
 
       if (!parseResult.success) {
-        onApplied(message.id);
-        lastAppliedStreamId = message.id;
+        markApplied(message.id);
         if (typeof loopback_id === "string") {
           const engine_response = {
             loopback_id,
@@ -179,16 +180,14 @@ class RedisHandler {
           ...wsEvent,
         });
       }
-      onApplied(message.id);
-      lastAppliedStreamId = message.id;
+      markApplied(message.id);
 
       if (typeof loopback_id === "string") {
         await this.sendBackendResponse(loopback_id, engine_response);
       }
     };
 
-    // A stateful engine must replay the retained stream itself, including entries
-    // that an older consumer group acknowledged or left pending.
+    // Commands at or before this ID existed when recovery started.
     const latest = await this.client.xRevRange(
       REDIS_CONSTANTS.REQUEST_STREAM,
       "+",
@@ -204,38 +203,44 @@ class RedisHandler {
       );
     }
 
-    while (compareStreamIds(lastAppliedStreamId, replayEndId) < 0) {
-      const messages = await this.client.xRange(
-        REDIS_CONSTANTS.REQUEST_STREAM,
-        `(${lastAppliedStreamId}`,
-        replayEndId,
-        { COUNT: REDIS_CONSTANTS.REPLAY_BATCH_SIZE }
-      );
-      if (!messages?.length) {
-        throw new Error(
-          "Engine stream entries required for recovery are unavailable"
-        );
+    const resumeLiquidations = async () => {
+      if (shouldResumeLiquidations()) {
+        await this.client.xAdd(REDIS_CONSTANTS.REQUEST_STREAM, "*", {
+          request: JSON.stringify({ action: "RETRY_LIQUIDATIONS" }),
+        });
       }
-      for (const message of messages) {
-        await applyMessage(message, true);
-      }
-    }
-
-    if (shouldResumeLiquidations()) {
-      await this.client.xAdd(REDIS_CONSTANTS.REQUEST_STREAM, "*", {
-        request: JSON.stringify({ action: "RETRY_LIQUIDATIONS" }),
-      });
-    }
+    };
+    let replaying = compareStreamIds(lastAppliedStreamId, replayEndId) < 0;
+    if (!replaying) await resumeLiquidations();
 
     while (true) {
       const request = await this.client.xRead(
         [{ key: REDIS_CONSTANTS.REQUEST_STREAM, id: lastAppliedStreamId }],
-        { BLOCK: 0, COUNT: REDIS_CONSTANTS.LIVE_BATCH_SIZE }
+        {
+          BLOCK: replaying ? 5_000 : 0,
+          COUNT: REDIS_CONSTANTS.READ_BATCH_SIZE,
+        }
       );
-      if (!request) continue;
+      if (!request) {
+        if (replaying) {
+          throw new Error(
+            "Engine stream entries required for recovery are unavailable"
+          );
+        }
+        continue;
+      }
       for (const stream of request) {
         for (const message of stream.messages) {
-          await applyMessage(message, false);
+          if (replaying && compareStreamIds(message.id, replayEndId) > 0) {
+            throw new Error(
+              "Engine stream entries required for recovery are unavailable"
+            );
+          }
+          await applyMessage(message, replaying);
+          if (replaying && message.id === replayEndId) {
+            replaying = false;
+            await resumeLiquidations();
+          }
         }
       }
     }

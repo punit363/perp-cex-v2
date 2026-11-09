@@ -14,7 +14,7 @@ import {
   formatFixed,
   multiplyFixed,
 } from "./math/fixed-point";
-import { FIXED_POINT_CONSTANTS } from "./constants";
+import { FIXED_POINT_CONSTANTS } from "./config/constants";
 import { generate_trade_id, min } from "./utils";
 import { OrderSide, OrderStatus, OrderType } from "commons/src/order.type";
 import {
@@ -102,7 +102,6 @@ class Orderbook {
 
   public getRestingOrderCount = (): number => this.orders.size;
 
-  /** Walk only enough levels to price the requested impact quantity. */
   public getImpactPrices = (
     targetQuantity: bigint
   ): { bid: bigint; ask: bigint } | null => {

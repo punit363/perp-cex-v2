@@ -137,6 +137,8 @@ const InsuranceFundLedgerEntrySchema = z.object({
   type: z.enum([
     "LIQUIDATION_FEE",
     "LIQUIDATION_SURPLUS",
+    "MAKER_FEE_SHARE",
+    "TAKER_FEE_SHARE",
     "SHORTFALL_COVER",
     "UNCOVERED_SHORTFALL",
     "FUNDING_SHORTFALL_COVER"
@@ -150,6 +152,7 @@ const InsuranceFundChangeSchema = z.object({
   collateral_asset: IdSchema,
   balance: ScaledIntegerSchema,
   total_liquidation_fees: ScaledIntegerSchema,
+  total_trading_fees: ScaledIntegerSchema.default("0"),
   total_liquidation_surplus: ScaledIntegerSchema,
   total_shortfall_covered: ScaledIntegerSchema,
   total_uncovered_shortfall: ScaledIntegerSchema,

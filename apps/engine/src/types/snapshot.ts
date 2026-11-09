@@ -66,6 +66,7 @@ export interface SnapshotInsuranceFund {
   collateral_asset: string;
   balance: string;
   total_liquidation_fees: string;
+  total_trading_fees?: string;
   total_liquidation_surplus: string;
   total_shortfall_covered: string;
   total_uncovered_shortfall: string;
@@ -79,7 +80,6 @@ export interface SnapshotTradingFeeAccount {
 }
 
 export interface EngineSnapshot {
-  version: 2 | 3 | 4 | 5 | 6 | 7;
   snapshot_time: number;
   scale: number;
   last_applied_stream_id: string;

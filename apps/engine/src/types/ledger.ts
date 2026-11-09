@@ -24,6 +24,8 @@ export interface TradingFeeSettlement {
 export type InsuranceFundLedgerEntryType =
   | "LIQUIDATION_FEE"
   | "LIQUIDATION_SURPLUS"
+  | "MAKER_FEE_SHARE"
+  | "TAKER_FEE_SHARE"
   | "SHORTFALL_COVER"
   | "UNCOVERED_SHORTFALL"
   | "FUNDING_SHORTFALL_COVER";
@@ -44,6 +46,7 @@ export interface InsuranceFundSettlement {
   collateral_asset: string;
   balance: bigint;
   total_liquidation_fees: bigint;
+  total_trading_fees: bigint;
   total_liquidation_surplus: bigint;
   total_shortfall_covered: bigint;
   total_uncovered_shortfall: bigint;

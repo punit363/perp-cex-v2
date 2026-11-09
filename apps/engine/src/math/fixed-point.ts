@@ -1,5 +1,5 @@
 import type { RoundingMode } from "../types";
-import { FIXED_POINT_CONSTANTS } from "../constants";
+import { FIXED_POINT_CONSTANTS } from "../config/constants";
 
 /** Parse a plain decimal string into 1e-8 units. Inputs with excess precision fail. */
 export const parseFixed = (value: string): bigint => {
@@ -12,10 +12,14 @@ export const parseFixed = (value: string): bigint => {
   const whole = match[2]!;
   const fraction = match[3] ?? "";
   if (fraction.length > FIXED_POINT_CONSTANTS.SCALE_DIGITS) {
-    throw new Error(`Value has more than ${FIXED_POINT_CONSTANTS.SCALE_DIGITS} decimal places: ${value}`);
+    throw new Error(
+      `Value has more than ${FIXED_POINT_CONSTANTS.SCALE_DIGITS} decimal places: ${value}`
+    );
   }
 
-  const units = BigInt(whole) * FIXED_POINT_CONSTANTS.SCALE + BigInt(fraction.padEnd(FIXED_POINT_CONSTANTS.SCALE_DIGITS, "0") || "0");
+  const units =
+    BigInt(whole) * FIXED_POINT_CONSTANTS.SCALE +
+    BigInt(fraction.padEnd(FIXED_POINT_CONSTANTS.SCALE_DIGITS, "0") || "0");
   return sign === "-" ? -units : units;
 };
 
@@ -33,7 +37,11 @@ export const formatFixed = (value: bigint): string => {
 };
 
 /** Divide integers with an explicit deterministic rounding rule. */
-export const divideRounded = (numerator: bigint, denominator: bigint, rounding: RoundingMode): bigint => {
+export const divideRounded = (
+  numerator: bigint,
+  denominator: bigint,
+  rounding: RoundingMode
+): bigint => {
   if (denominator === 0n) {
     throw new Error("Cannot divide by zero");
   }
@@ -44,7 +52,7 @@ export const divideRounded = (numerator: bigint, denominator: bigint, rounding: 
     return quotient;
   }
 
-  const resultIsNegative = (numerator < 0n) !== (denominator < 0n);
+  const resultIsNegative = numerator < 0n !== denominator < 0n;
   if (rounding === "floor") {
     return resultIsNegative ? quotient - 1n : quotient;
   }
@@ -52,7 +60,8 @@ export const divideRounded = (numerator: bigint, denominator: bigint, rounding: 
     return resultIsNegative ? quotient : quotient + 1n;
   }
 
-  const atLeastHalf = 2n * (remainder < 0n ? -remainder : remainder) >=
+  const atLeastHalf =
+    2n * (remainder < 0n ? -remainder : remainder) >=
     (denominator < 0n ? -denominator : denominator);
   if (!atLeastHalf) {
     return quotient;
@@ -61,11 +70,23 @@ export const divideRounded = (numerator: bigint, denominator: bigint, rounding: 
 };
 
 /** Multiply two 1e-8 values, explicitly choosing how to round the 1e-16 product. */
-export const multiplyFixed = (left: bigint, right: bigint, rounding: RoundingMode): bigint => {
+export const multiplyFixed = (
+  left: bigint,
+  right: bigint,
+  rounding: RoundingMode
+): bigint => {
   return divideRounded(left * right, FIXED_POINT_CONSTANTS.SCALE, rounding);
 };
 
 /** Divide two 1e-8 values, explicitly choosing how to round the result. */
-export const divideFixed = (numerator: bigint, denominator: bigint, rounding: RoundingMode): bigint => {
-  return divideRounded(numerator * FIXED_POINT_CONSTANTS.SCALE, denominator, rounding);
+export const divideFixed = (
+  numerator: bigint,
+  denominator: bigint,
+  rounding: RoundingMode
+): bigint => {
+  return divideRounded(
+    numerator * FIXED_POINT_CONSTANTS.SCALE,
+    denominator,
+    rounding
+  );
 };

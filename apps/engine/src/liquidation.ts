@@ -1,7 +1,7 @@
 import { PositionType } from "commons/src/order.type";
 import type { Position } from "./types";
 import { divideRounded } from "./math/fixed-point";
-import { FIXED_POINT_CONSTANTS, LIQUIDATION_CONSTANTS } from "./constants";
+import { FIXED_POINT_CONSTANTS } from "./config/constants";
 import {
   calculateFee,
   calculateMaintenanceMargin,
@@ -9,7 +9,7 @@ import {
 } from "./math/financial-math";
 import { calcUnrealisedPnL } from "./perp";
 
-// Calculate the position's liquidation risk at the current mark price.
+// Calculate the position's liquidation risk at the current mark price
 export const calculatePositionRisk = (
   position: Position,
   markPrice: bigint,
@@ -42,7 +42,7 @@ export const calculatePositionRisk = (
   };
 };
 
-// Calculate the equity and fee attributable to one liquidation fill.
+// Calculate the equity and fee attributed to each liquidation fill.
 export const calculateLiquidationFill = (
   position: Position,
   filled: bigint,
@@ -91,7 +91,7 @@ export const calculateLiquidationFill = (
   };
 };
 
-/** Threshold on the scaled mark-price grid where maintenance plus close fee is met. */
+
 export const calculateLiquidationPrice = (
   position: Position,
   maintenanceRate: bigint,
@@ -112,14 +112,7 @@ export const calculateLiquidationPrice = (
     let low = minimumPrice;
     let high =
       position.avg_entry_price > 0n ? position.avg_entry_price * 2n : 2n;
-    for (
-      let i = 0;
-      i < LIQUIDATION_CONSTANTS.PRICE_SEARCH_MAX_DOUBLINGS &&
-      liquidatable(high);
-      i++
-    )
-      high *= 2n;
-    if (liquidatable(high)) return null;
+    while (liquidatable(high)) high *= 2n;
     while (high - low > 1n) {
       const middle = (low + high) / 2n;
       if (liquidatable(middle)) low = middle;
@@ -131,13 +124,7 @@ export const calculateLiquidationPrice = (
   if (liquidatable(minimumPrice)) return minimumPrice;
   let low = minimumPrice;
   let high = position.avg_entry_price > 0n ? position.avg_entry_price * 2n : 2n;
-  for (
-    let i = 0;
-    i < LIQUIDATION_CONSTANTS.PRICE_SEARCH_MAX_DOUBLINGS && !liquidatable(high);
-    i++
-  )
-    high *= 2n;
-  if (!liquidatable(high)) return null;
+  while (!liquidatable(high)) high *= 2n;
   while (high - low > 1n) {
     const middle = (low + high) / 2n;
     if (liquidatable(middle)) high = middle;
@@ -145,3 +132,14 @@ export const calculateLiquidationPrice = (
   }
   return high;
 };
+
+/*
+the engine decides whether a position needs liquidation using mark-price equity versus maintenance margin + estimated close fee
+
+liquidation is triggered after each trade fill and after each markprice update request
+
+For each position liquidation the engine places a close order.
+Then for each fill, calculateLiquidationFill() allocates position margin and accrued funding,
+calculates realized PnL at the actual execution price, and computes:
+execution equity = allocated margin + realized PnL + allocated funding
+*/

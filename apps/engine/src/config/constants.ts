@@ -1,56 +1,56 @@
-/** Shared engine values. Environment-specific overrides stay in config/. */
-export const FIXED_POINT_CONSTANTS = {
+const FIXED_POINT_CONSTANTS = {
   SCALE_DIGITS: 8,
   SCALE: 100_000_000n,
   DECIMAL_PATTERN: /^([+-]?)(\d+)(?:\.(\d+))?$/,
-} as const;
+};
 
-export const FUNDING_CONSTANTS = {
+const FUNDING_CONSTANTS = {
   INTERVAL_MS: 8 * 60 * 60 * 1000,
   RATE_CAP: FIXED_POINT_CONSTANTS.SCALE / 200n,
   IMPACT_NOTIONAL: 1_000n * FIXED_POINT_CONSTANTS.SCALE,
   MIN_SAMPLES: 30,
-  SETTLEMENT_LATE_THRESHOLD_MS: 60_000,
-} as const;
+};
 
-export const MARKET_DATA_CONSTANTS = {
+const MARKET_DATA_CONSTANTS = {
   CANDLE_INTERVAL_MS: 60_000,
-} as const;
+};
 
-export const LIQUIDATION_CONSTANTS = {
-  PRICE_SEARCH_MAX_DOUBLINGS: 128,
-} as const;
-
-export const REDIS_CONSTANTS = {
+const REDIS_CONSTANTS = {
   REQUEST_STREAM: "engine",
   RESPONSE_STREAM: "backend",
   EVENT_STREAM: "engine-events",
   EVENT_GROUPS: ["db-projector", "websocket"],
   INITIAL_STREAM_ID: "0-0",
   GROUP_START_ID: "0",
-  REPLAY_BATCH_SIZE: 100,
-  LIVE_BATCH_SIZE: 1,
+  READ_BATCH_SIZE: 100,
   LATEST_ENTRY_COUNT: 1,
-} as const;
+}
 
-export const ENGINE_CONSTANTS = {
-  SNAPSHOT_VERSION: 7,
+const ENGINE_CONSTANTS = {
   SNAPSHOT_INTERVAL_MS: 3_000,
-  RETRY_INITIAL_DELAY_MS: 1_000,
-  RETRY_MAX_DELAY_MS: 10_000,
-  LIQUIDATION_QUEUE_MAX_PROCESSED: 10_000,
+  RETRY_DELAY_MS: 1_000,
 } as const;
 
-export const MARKET_DEFAULTS = {
+const MARKET_DEFAULTS = {
   COLLATERAL_ASSET: "USDT",
   MAKER_FEE_RATE: "0.0002",
   TAKER_FEE_RATE: "0.0005",
   INSURANCE_FUND_INITIAL_BALANCE: "0",
   MAINTENANCE_MARGIN_RATE: "0.005",
   MAX_MARK_PRICE_AGE_MS: 5_000,
-} as const;
+};
 
-export const RUNTIME_DEFAULTS = {
+const RUNTIME_DEFAULTS = {
   REDIS_URL: "redis://localhost:6379",
   SNAPSHOT_FILENAME: "snapshot.json",
-} as const;
+};
+
+export {
+  FIXED_POINT_CONSTANTS,
+  FUNDING_CONSTANTS,
+  MARKET_DATA_CONSTANTS,
+  REDIS_CONSTANTS,
+  ENGINE_CONSTANTS,
+  MARKET_DEFAULTS,
+  RUNTIME_DEFAULTS,
+};

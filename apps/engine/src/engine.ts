@@ -5,7 +5,7 @@ import {
   FUNDING_CONSTANTS,
   MARKET_DATA_CONSTANTS,
   REDIS_CONSTANTS,
-} from "./constants";
+} from "./config/constants";
 import {
   PositionState,
   type Position,
@@ -22,6 +22,7 @@ import {
   type MarketContext,
   type MarketRiskConfig,
   type WSEventDraft,
+  type FeeCharge,
 } from "./types";
 import {
   engine_response,
@@ -47,8 +48,8 @@ import {
 } from "commons/src/order.type";
 import { calcAvgPrice, calcUnrealisedPnL } from "./perp";
 import MARKET_CONFIG from "./config/market.config";
-import InsuranceFund from "./insurance-fund";
-import TradingFeeAccount from "./trading-fee-account";
+import InsuranceFund from "./exchange_acc/insurance-fund";
+import TradingFeeAccount from "./exchange_acc/trading-fee-account";
 import {
   calculateLiquidationFill,
   calculateLiquidationPrice,
@@ -59,7 +60,7 @@ import RUNTIME_CONFIG from "./config/runtime.config";
 import { randomUUID } from "node:crypto";
 import {
   calculateFundingPayments,
-  clampFundingRate,
+  capFundingRate,
   fundingIntervalEnd,
   samplePremium,
 } from "./funding";
@@ -176,7 +177,8 @@ class Engine {
             throw new Error(`Snapshot order ${order.order_id} has no account`);
           }
           account.orders.add(order.order_id);
-          if (snapshot.version < 4) {
+          // Restore the fee reserve when a saved snapshot has no fee account.
+          if (!snapshot.trading_fee_account) {
             this.accounts.reserveMargin(
               order.user_id,
               calculateFee(
@@ -211,8 +213,7 @@ class Engine {
         existing.quote = quotes.get(market_id) ?? "";
         continue;
       }
-      // Risk changes are replayed from the engine stream. DB values are a
-      // projection and may be ahead of the snapshot cursor on recovery.
+
       this.markets.set(
         market_id,
         this.createMarketContext(market_id, quotes.get(market_id) ?? "")
@@ -347,12 +348,31 @@ class Engine {
     this.awaitingEventPublication = false;
   };
 
+  private collectTradingFees = (charges: FeeCharge[]) => {
+    if (charges.some((charge) => charge.amount < 0n)) {
+      throw new Error("Trading fee cannot be negative");
+    }
+    // The fund gets the rounded-down half; the exchange keeps the odd unit.
+    const fundShares = charges.map((charge) => ({
+      ...charge,
+      amount: charge.amount / 2n,
+    }));
+    const exchangeShares = charges.map((charge, index) => ({
+      ...charge,
+      amount: charge.amount - fundShares[index]!.amount,
+    }));
+    return {
+      insuranceFundChange:
+        this.insuranceFund.collectTradingFeeShares(fundShares),
+      tradingFeeChange: this.tradingFeeAccount.collect(exchangeShares),
+    };
+  };
+
   captureSnapshot = () => {
     this.snapshotTimer = setInterval(() => {
       if (this.awaitingEventPublication) return;
 
       const snapshot: EngineSnapshot = {
-        version: ENGINE_CONSTANTS.SNAPSHOT_VERSION,
         snapshot_time: Date.now(),
         scale: Number(FIXED_POINT_CONSTANTS.SCALE),
         last_applied_stream_id: this.lastAppliedStreamId,
@@ -494,8 +514,6 @@ class Engine {
     replayTimestamp?: number,
     sourceMessageId?: string
   ): EngineCommandResult => {
-    this.liquidationQueue ??= new Map();
-    this.processingLiquidations ??= false;
     const sourceTimestamp = sourceMessageId
       ? Number(sourceMessageId.split("-")[0])
       : undefined;
@@ -812,7 +830,8 @@ class Engine {
   private estimatedFundingRate = (state: FundingState): bigint => {
     if (state.fixedRate !== null) return state.fixedRate;
     if (state.premiumSamples < FUNDING_CONSTANTS.MIN_SAMPLES) return 0n;
-    return clampFundingRate(
+    //calculate the average funding rate from the pool of samples collected while capping the max values
+    return capFundingRate(
       divideRounded(
         state.premiumSum,
         BigInt(state.premiumSamples),
@@ -858,7 +877,7 @@ class Engine {
     if (!state) return engine_response("Incorrect Market ID", 0);
     if (
       request.funding_rate !== null &&
-      clampFundingRate(request.funding_rate) !== request.funding_rate
+      capFundingRate(request.funding_rate) !== request.funding_rate
     ) {
       return engine_response("Funding rate exceeds the market cap", 0);
     }
@@ -922,15 +941,14 @@ class Engine {
         this.fundingResponse(market_id)
       );
     }
-    const late =
-      now - interval_end_ms > FUNDING_CONSTANTS.SETTLEMENT_LATE_THRESHOLD_MS;
+    const expired = now >= interval_end_ms + FUNDING_CONSTANTS.INTERVAL_MS;
     // The current mark feed is a two-venue spot index. Keep this name explicit
     // here so a future perp mark can diverge without changing funding notional.
-    const indexPrice = late ? 0n : this.requireFreshMarkPrice(market_id);
+    const indexPrice = expired ? 0n : this.requireFreshMarkPrice(market_id);
     const sampleCount =
       state.premiumIntervalMs === interval_end_ms ? state.premiumSamples : 0;
     const skipped =
-      late ||
+      expired ||
       (state.fixedRate === null && sampleCount < FUNDING_CONSTANTS.MIN_SAMPLES);
     const rate = skipped ? 0n : this.estimatedFundingRate(state);
     const participants = [
@@ -1045,7 +1063,7 @@ class Engine {
     }
     return engine_response(
       skipped
-        ? "Funding skipped: late interval or insufficient premium samples"
+        ? "Funding skipped: expired interval or insufficient premium samples"
         : "Funding settled",
       1,
       this.fundingResponse(market_id)
@@ -1235,8 +1253,12 @@ class Engine {
         }
       }
 
-      let trading_fee_change: DBEventDraft["changes"]["trading_fee_account"] =
-        [];
+      let trading_fee_change: NonNullable<
+        DBEventDraft["changes"]["trading_fee_account"]
+      > = [];
+      let insurance_fee_change: NonNullable<
+        DBEventDraft["changes"]["insurance_fund"]
+      > = [];
       let market_position_margin_added = 0n;
 
       if (result.fills.length > 0) {
@@ -1617,9 +1639,12 @@ class Engine {
           );
         }
 
-        // Record the maker and taker fees debited during the fills.
-        const fee_settlement = this.tradingFeeAccount.collect(fee_charges);
-        trading_fee_change = [fee_settlement];
+        // Split each debited maker and taker fee between the fund and exchange.
+        const fee_settlement = this.collectTradingFees(fee_charges);
+        trading_fee_change = [fee_settlement.tradingFeeChange];
+        if (fee_settlement.insuranceFundChange.entries.length > 0) {
+          insurance_fee_change = [fee_settlement.insuranceFundChange];
+        }
 
         // Check each affected user's position after all fills are settled.
         for (const affected_user_id of liquidation_risks) {
@@ -1804,7 +1829,14 @@ class Engine {
             result.fills.length > 0
               ? [{ market_id, ...orderbook.fetchMarketData() }]
               : [],
-          trading_fee_account: trading_fee_change,
+          insurance_fund: insurance_fee_change.map((change) => ({
+            ...this.insuranceFund.snapshot(),
+            entries: change.entries,
+          })),
+          trading_fee_account: trading_fee_change.map((change) => ({
+            ...this.tradingFeeAccount.snapshot(),
+            entries: change.entries,
+          })),
         },
       });
 
@@ -2024,9 +2056,6 @@ class Engine {
         this.liquidationQueue.delete(key);
         if (processed.has(key)) continue;
         processed.add(key);
-        if (processed.size > ENGINE_CONSTANTS.LIQUIDATION_QUEUE_MAX_PROCESSED) {
-          throw new Error("Liquidation cascade exceeds safety limit");
-        }
         this.processLiquidation(next);
       }
     } finally {
@@ -2327,6 +2356,13 @@ class Engine {
         );
       });
 
+      const fee_settlement = liquidation_fee_charges.length
+        ? this.collectTradingFees(liquidation_fee_charges)
+        : null;
+      if (fee_settlement?.insuranceFundChange.entries.length) {
+        insurance_fund_changes.push(fee_settlement.insuranceFundChange);
+      }
+
       for (const settlement_input of fund_settlement_inputs) {
         const fund_settlement =
           this.insuranceFund.settleLiquidation(settlement_input);
@@ -2341,14 +2377,15 @@ class Engine {
           collateral_asset: fund_settlement.collateral_asset,
           balance: fund_settlement.balance,
           total_liquidation_fees: fund_settlement.total_liquidation_fees,
+          total_trading_fees: fund_settlement.total_trading_fees,
           total_liquidation_surplus: fund_settlement.total_liquidation_surplus,
           total_shortfall_covered: fund_settlement.total_shortfall_covered,
           total_uncovered_shortfall: fund_settlement.total_uncovered_shortfall,
           entries: fund_settlement.entries,
         });
       }
-      const trading_fee_changes = liquidation_fee_charges.length
-        ? [this.tradingFeeAccount.collect(liquidation_fee_charges)]
+      const trading_fee_changes = fee_settlement
+        ? [fee_settlement.tradingFeeChange]
         : [];
 
       // Liquidation consumes the portion of isolated margin assigned to fills. Positive execution equity is returned after the liquidation fee
@@ -2533,7 +2570,7 @@ class Engine {
     }
 
     const market = this.markets.get(market_id)!;
-    market.markPrice = mark_price;//update the new mark price
+    market.markPrice = mark_price; //update the new mark price
     market.markPriceMetadata = {
       producer_id,
       source_timestamp,
