@@ -74,7 +74,7 @@ export const calculateFundingPayments = (
     return { payments: [], insuranceUsed: 0n, uncoveredShortfall: 0n };
 
   const absoluteRate = rate < 0n ? -rate : rate;
-  //sums
+  //sums quantity of all positions on each side
   const payerQuantity = payers.reduce(
     (sum, item) => sum + item.position.quantity,
     0n
@@ -85,11 +85,14 @@ export const calculateFundingPayments = (
   );
   const matchedQuantity =
     payerQuantity < receiverQuantity ? payerQuantity : receiverQuantity;
+
+    //create a pool of amount at current funding rate for 
   const pool = multiplyFixed(
     calculateNotional(indexPrice, matchedQuantity),
     absoluteRate,
     "floor"
   );
+
   const allocate = (side: FundingParticipant[], totalQuantity: bigint) => {
     let allocated = 0n;
     const amounts = side.map(({ position }) => {

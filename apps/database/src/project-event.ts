@@ -221,6 +221,7 @@ export const projectEngineEvent = async (event: DBEvent) => {
         const data = {
           balance: BigInt(change.balance),
           total_liquidation_fees: BigInt(change.total_liquidation_fees),
+          total_trading_fees: BigInt(change.total_trading_fees),
           total_liquidation_surplus: BigInt(change.total_liquidation_surplus),
           total_shortfall_covered: BigInt(change.total_shortfall_covered),
           total_uncovered_shortfall: BigInt(change.total_uncovered_shortfall),

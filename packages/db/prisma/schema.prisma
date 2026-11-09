@@ -57,6 +57,8 @@ enum LiquidationStatus {
 enum InsuranceFundEntryType {
   LIQUIDATION_FEE
   LIQUIDATION_SURPLUS
+  MAKER_FEE_SHARE
+  TAKER_FEE_SHARE
   SHORTFALL_COVER
   UNCOVERED_SHORTFALL
   FUNDING_SHORTFALL_COVER
@@ -283,6 +285,7 @@ model InsuranceFund {
   collateral_asset          String   @id
   balance                   BigInt
   total_liquidation_fees    BigInt
+  total_trading_fees        BigInt   @default(0)
   total_liquidation_surplus BigInt
   total_shortfall_covered   BigInt
   total_uncovered_shortfall BigInt
