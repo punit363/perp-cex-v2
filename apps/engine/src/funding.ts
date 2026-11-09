@@ -86,7 +86,7 @@ export const calculateFundingPayments = (
   const matchedQuantity =
     payerQuantity < receiverQuantity ? payerQuantity : receiverQuantity;
 
-    //create a pool of amount at current funding rate for 
+  //create a pool of amount at current funding rate for least quantity
   const pool = multiplyFixed(
     calculateNotional(indexPrice, matchedQuantity),
     absoluteRate,
