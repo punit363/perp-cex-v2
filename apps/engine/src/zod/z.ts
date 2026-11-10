@@ -60,6 +60,7 @@ const EngineSnapshotSchema = z
             premium_sum: SnapshotInteger,
             premium_samples: z.number().int().nonnegative(),
             premium_interval_ms: z.number().int().nonnegative(),
+            last_premium_sample_at_ms: z.number().int().nonnegative().optional(),
             last_rate: SnapshotInteger,
           })
           .optional(),

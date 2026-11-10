@@ -163,6 +163,7 @@ class Engine {
                 premiumSum: BigInt(funding.premium_sum),
                 premiumSamples: funding.premium_samples,
                 premiumIntervalMs: funding.premium_interval_ms,
+                lastPremiumSampleAtMs: funding.last_premium_sample_at_ms ?? 0,
                 lastRate: BigInt(funding.last_rate),
               }
             : this.emptyFundingState(),
@@ -283,6 +284,7 @@ class Engine {
       premiumSum: 0n,
       premiumSamples: 0,
       premiumIntervalMs: 0,
+      lastPremiumSampleAtMs: 0,
       lastRate: 0n,
     };
   };
@@ -422,6 +424,7 @@ class Engine {
               premium_sum: String(state.premiumSum),
               premium_samples: state.premiumSamples,
               premium_interval_ms: state.premiumIntervalMs,
+              last_premium_sample_at_ms: state.lastPremiumSampleAtMs,
               last_rate: String(state.lastRate),
             };
           })(),
@@ -992,6 +995,7 @@ class Engine {
     state.premiumSum = 0n;
     state.premiumSamples = 0;
     state.premiumIntervalMs = interval_end_ms + FUNDING_CONSTANTS.INTERVAL_MS;
+    state.lastPremiumSampleAtMs = 0;
     this.emitDbEvent({
       event_type: "FUNDING_SETTLEMENT",
       changes: {
@@ -2594,8 +2598,15 @@ class Engine {
         funding.premiumIntervalMs = intervalEnd;
         funding.premiumSum = 0n;
         funding.premiumSamples = 0;
+        funding.lastPremiumSampleAtMs = 0;
       }
-      if (funding.premiumIntervalMs === intervalEnd) {
+      if (
+        funding.premiumIntervalMs === intervalEnd &&
+        (funding.lastPremiumSampleAtMs === 0 ||
+          source_timestamp - funding.lastPremiumSampleAtMs >=
+            FUNDING_CONSTANTS.SAMPLE_INTERVAL_MS)
+      ) {
+        funding.lastPremiumSampleAtMs = source_timestamp;
         const premium = samplePremium(book, mark_price);
         if (premium !== null) {
           funding.premiumSum += premium;

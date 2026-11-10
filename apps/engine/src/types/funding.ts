@@ -6,6 +6,7 @@ export type FundingState = {
   premiumSum: bigint;// sum of all the premium sample whose funding rate is to be averaged
   premiumSamples: number; // no of premium samples
   premiumIntervalMs: number;
+  lastPremiumSampleAtMs: number;
   lastRate: bigint;
 };
 

@@ -28,6 +28,7 @@ export interface SnapshotMarket {
     premium_sum: string;
     premium_samples: number;
     premium_interval_ms: number;
+    last_premium_sample_at_ms?: number;
     last_rate: string;
   };
 }
