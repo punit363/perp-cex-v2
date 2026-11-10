@@ -407,11 +407,12 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const ticker = tickerFromTrades(trades, Date.now());
   const current = trades.at(-1)?.price ?? lastPrice;
   const icon = icons[label.base];
+  const assetAccent = ({ BTC: "#f6a126", ETH: "#7187df", SUI: "#68bde0", SOL: "#53bd8b", DOGE: "#e1b83e", LTC: "#5b86cc", MATIC: "#8c50e8", UNI: "#da2fab" } as Record<string, string>)[label.base] ?? "#c3b6ec";
 
   const collateral = balance ? Number(balance.available) + Number(balance.reserved) : null;
   const positionPnl = positionSummary ? Number(positionSummary.unrealized_pnl) : null;
 
-  return <main className="trade-page">
+  return <main className="trade-page" data-asset={label.base}>
     <div className="trade-page__inner">
       <header className="trade-shell-head">
         <button type="button" className="trade-shell-head__brand" onClick={onHome} aria-label="APEX Exchange home"><span className="trade-shell-head__mark">∧</span><span>APEX <small>EXCHANGE</small></span></button>
@@ -426,7 +427,7 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
         <section className="trade-overview__card trade-overview__card--collateral" aria-label="Collateral summary"><div className="trade-overview__heading"><span>ACCOUNT BALANCE</span><svg className="trade-overview__symbol" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7.5h15v11H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M15 12h6v4h-6a2 2 0 0 1 0-4Z" stroke="currentColor" strokeWidth="1.5"/></svg></div><strong className="trade-overview__value">{collateral !== null && Number.isFinite(collateral) ? collateral.toLocaleString(undefined, { maximumFractionDigits: 4 }) : "–"}<small> USDT</small></strong><p>{balance ? <>Available <b>{grouped(balance.available)}</b><span className="trade-overview__separator">/</span> Reserved <b>{grouped(balance.reserved)}</b></> : token ? "Loading collateral balance" : "Sign in to view your collateral"}</p></section>
       </div>
       <div className="trade-workspace">
-        <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} marketLabel={market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")} marketIcon={icon} lastPrice={current ? grouped(current) : null} changePercent={ticker?.changePercent ?? null} volume={ticker?.volume ?? null} illustrative={preview} onMarkets={onMarkets} />
+        <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} marketLabel={market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")} marketIcon={icon} accentColor={assetAccent} lastPrice={current ? grouped(current) : null} changePercent={ticker?.changePercent ?? null} volume={ticker?.volume ?? null} illustrative={preview} onMarkets={onMarkets} />
         <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades.slice(-20).reverse()} connected={feed === "connected"} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
         <OrderForm marketId={marketId} listed={listed} halted={Boolean(market?.trading_halted)} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
         <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh + accountEventRevision} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />

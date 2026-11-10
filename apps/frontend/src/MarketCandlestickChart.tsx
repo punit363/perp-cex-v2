@@ -15,7 +15,7 @@ function sameCandle(a: CandlestickData<UTCTimestamp>, b: CandlestickData<UTCTime
   return a.time === b.time && a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close;
 }
 
-export function MarketCandlestickChart({ sourceCandles, connected, loading, error, marketLabel, marketIcon, lastPrice, changePercent, volume, illustrative, onMarkets }: { sourceCandles: StoredCandle[]; connected: boolean; loading: boolean; error: string; marketLabel: string; marketIcon?: string; lastPrice: string | null; changePercent: number | null; volume: number | null; illustrative: boolean; onMarkets: () => void }) {
+export function MarketCandlestickChart({ sourceCandles, connected, loading, error, marketLabel, marketIcon, accentColor, lastPrice, changePercent, volume, illustrative, onMarkets }: { sourceCandles: StoredCandle[]; connected: boolean; loading: boolean; error: string; marketLabel: string; marketIcon?: string; accentColor: string; lastPrice: string | null; changePercent: number | null; volume: number | null; illustrative: boolean; onMarkets: () => void }) {
   const [range, setRange] = useState<ChartRange>("monthly");
   const [chartMode, setChartMode] = useState<"bars" | "candles" | "area">("area");
   const container = useRef<HTMLDivElement>(null);
@@ -43,28 +43,28 @@ export function MarketCandlestickChart({ sourceCandles, connected, loading, erro
     if (!container.current) return;
     const instance = createChart(container.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "#111011" }, textColor: "#77717c", fontFamily: "JetBrains Mono, ui-monospace, monospace", fontSize: 10, attributionLogo: true },
-      grid: { vertLines: { color: "#201d20" }, horzLines: { color: "#201d20" } },
-      rightPriceScale: { borderColor: "#302a30", scaleMargins: { top: 0.13, bottom: 0.14 } },
-      timeScale: { borderColor: "#302a30", timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 9 },
-      crosshair: { vertLine: { color: "#81604d" }, horzLine: { color: "#81604d" } },
+      layout: { background: { type: ColorType.Solid, color: "#0e1014" }, textColor: "#747f93", fontFamily: "JetBrains Mono, ui-monospace, monospace", fontSize: 10, attributionLogo: true },
+      grid: { vertLines: { color: "#1b2027" }, horzLines: { color: "#1b2027" } },
+      rightPriceScale: { borderColor: "#20242c", scaleMargins: { top: 0.13, bottom: 0.14 } },
+      timeScale: { borderColor: "#20242c", timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 9 },
+      crosshair: { vertLine: { color: "#747f93" }, horzLine: { color: "#747f93" } },
     });
     chart.current = instance;
     series.current = instance.addSeries(CandlestickSeries, {
-      upColor: "#f28b46", downColor: "#8b5ac8", borderVisible: false,
-      wickUpColor: "#ffa66a", wickDownColor: "#ae80dd",
+      upColor: "#53bd8b", downColor: "#d96379", borderVisible: false,
+      wickUpColor: "#53bd8b", wickDownColor: "#d96379",
       priceLineVisible: true, visible: false,
     });
     bars.current = instance.addSeries(BarSeries, {
-      upColor: "#f28b46", downColor: "#8b5ac8", openVisible: true,
+      upColor: "#53bd8b", downColor: "#d96379", openVisible: true,
       priceLineVisible: true, visible: false,
     });
     area.current = instance.addSeries(AreaSeries, {
-      lineColor: "#f37b2e", topColor: "rgba(240, 104, 29, .34)", bottomColor: "rgba(94, 40, 111, .02)", lineWidth: 2,
+      lineColor: accentColor, topColor: `${accentColor}40`, bottomColor: `${accentColor}05`, lineWidth: 2,
       lastValueVisible: true, priceLineVisible: true,
     });
     return () => { instance.remove(); chart.current = null; series.current = null; bars.current = null; area.current = null; previous.current = []; previousRange.current = null; };
-  }, []);
+  }, [accentColor]);
 
   useEffect(() => {
     if (!series.current || !chart.current) return;
@@ -80,13 +80,13 @@ export function MarketCandlestickChart({ sourceCandles, connected, loading, erro
     area.current?.setData(candles.map((bar) => ({ time: bar.time, value: bar.close })));
     previous.current = candles;
     previousRange.current = range;
-  }, [candles, range]);
+  }, [candles, range, accentColor]);
 
   useEffect(() => {
     series.current?.applyOptions({ visible: chartMode === "candles" });
     bars.current?.applyOptions({ visible: chartMode === "bars" });
     area.current?.applyOptions({ visible: chartMode === "area" });
-  }, [chartMode]);
+  }, [chartMode, accentColor]);
 
   return <section className="trade-chart" aria-label="Market price chart">
     <div className="trade-chart__intro">
@@ -117,7 +117,7 @@ export function MarketCandlestickChart({ sourceCandles, connected, loading, erro
     </div>
     <div className="trade-chart__plot">
       <div ref={container} className="trade-chart__canvas" />
-      {!candles.length && illustrative && <div className="trade-chart__preview" aria-label="Illustrative chart preview, not live market data"><svg viewBox="0 0 900 250" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="trade-preview-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ee7130" stopOpacity=".33"/><stop offset=".55" stopColor="#a94a2e" stopOpacity=".14"/><stop offset="1" stopColor="#712b7f" stopOpacity="0"/></linearGradient></defs><path d="M0 194 28 182 48 165 63 175 86 151 105 159 125 150 148 168 167 139 190 146 215 129 236 141 254 121 278 127 298 109 317 157 339 145 358 151 385 134 407 143 431 112 454 82 472 111 495 72 515 43 539 91 559 100 581 84 603 122 627 108 646 133 670 127 690 149 713 138 738 153 757 145 780 164 798 157 825 166 844 152 866 160 900 155 900 250 0 250Z" fill="url(#trade-preview-fill)"/><path d="M0 194 28 182 48 165 63 175 86 151 105 159 125 150 148 168 167 139 190 146 215 129 236 141 254 121 278 127 298 109 317 157 339 145 358 151 385 134 407 143 431 112 454 82 472 111 495 72 515 43 539 91 559 100 581 84 603 122 627 108 646 133 670 127 690 149 713 138 738 153 757 145 780 164 798 157 825 166 844 152 866 160 900 155" fill="none" stroke="#ee7933" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/></svg><span>ILLUSTRATIVE PREVIEW · LIVE CANDLES APPEAR WHEN TRADES MATCH</span></div>}
+      {!candles.length && illustrative && <div className="trade-chart__preview" aria-label="Illustrative chart preview, not live market data"><svg viewBox="0 0 900 250" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="trade-preview-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={accentColor} stopOpacity=".25"/><stop offset=".55" stopColor={accentColor} stopOpacity=".09"/><stop offset="1" stopColor={accentColor} stopOpacity="0"/></linearGradient></defs><path d="M0 194 28 182 48 165 63 175 86 151 105 159 125 150 148 168 167 139 190 146 215 129 236 141 254 121 278 127 298 109 317 157 339 145 358 151 385 134 407 143 431 112 454 82 472 111 495 72 515 43 539 91 559 100 581 84 603 122 627 108 646 133 670 127 690 149 713 138 738 153 757 145 780 164 798 157 825 166 844 152 866 160 900 155 900 250 0 250Z" fill="url(#trade-preview-fill)"/><path d="M0 194 28 182 48 165 63 175 86 151 105 159 125 150 148 168 167 139 190 146 215 129 236 141 254 121 278 127 298 109 317 157 339 145 358 151 385 134 407 143 431 112 454 82 472 111 495 72 515 43 539 91 559 100 581 84 603 122 627 108 646 133 670 127 690 149 713 138 738 153 757 145 780 164 798 157 825 166 844 152 866 160 900 155" fill="none" stroke={accentColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/></svg><span>ILLUSTRATIVE PREVIEW · LIVE CANDLES APPEAR WHEN TRADES MATCH</span></div>}
       {!candles.length && !illustrative && <div className="trade-chart__empty"><span className="trade-chart__empty-icon">⌁</span><strong>{loading ? "Loading trade history" : "No trades yet"}</strong><span>{error || "Candles appear when orders match in this market."}</span></div>}
     </div>
     <div className="trade-chart__footer"><span>Trade price · {choices.find((choice) => choice.value === range)?.label} view</span><span>{candles.length} candle{candles.length === 1 ? "" : "s"}</span></div>

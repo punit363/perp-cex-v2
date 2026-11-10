@@ -1,0 +1,197 @@
+/* APEX Markets reference palette. Color-only overrides preserve the existing page geometry. */
+.site-shell:has(.landing-v2),
+.site-shell:has(.trade-page) { background: #090b0d; }
+
+/* Landing: the market directory's neutral shell, with a clear but quiet CTA. */
+.landing-v2 {
+  --lp-bg: #090b0d;
+  --lp-surface: #0e1014;
+  --lp-border: #20242c;
+  --lp-green: #c3b6ec;
+  --lp-muted: #747f93;
+  background: #090b0d;
+  color: #f2f3f5;
+}
+.landing-v2 :is(button, a, input):focus-visible { outline-color: #c3b6ec; }
+.landing-hero, .landing-markets, .landing-platform, .landing-products,
+.landing-capabilities, .landing-capabilities__grid div { background: #090b0d; }
+.landing-hero__field { background: radial-gradient(ellipse 85% 62% at 82% 45%, #24233130, transparent 68%); }
+.landing-hero__field::after { background: linear-gradient(90deg, #090b0d 0%, #090b0da6 23%, transparent 58%), linear-gradient(0deg, #090b0d 0%, transparent 35%); }
+.landing-hero__dots { background-image: radial-gradient(circle, #8590a080 1.35px, transparent 1.8px); }
+.landing-hero__marker { border-left-color: #a0a9bb8c; background: linear-gradient(105deg, #7187df12, transparent); color: #a0a9bb; }
+.landing-hero__marker strong, .landing-nav__brand, .landing-hero__title,
+.landing-section-head h2, .landing-products h2, .landing-capabilities h2,
+.landing-convert h2 { color: #f2f3f5; }
+.landing-nav__mark { color: #f2f3f5; }
+.landing-nav__brand small, .landing-nav nav :is(button, a), .landing-hero__eyebrow,
+.landing-hero__aside, .landing-section-head p, .landing-convert p { color: #a0a9bb; }
+.landing-hero__scroll, .landing-market-tile__copy strong span,
+.landing-market-tile__copy small, .landing-markets__empty,
+.landing-capabilities__grid p, .landing-footer { color: #747f93; }
+.landing-nav nav :is(button, a):hover { color: #c3b6ec; }
+.landing-pill--green, .landing-nav__signup { background: #c3b6ec; color: #090b0d !important; }
+.landing-pill--green:hover, .landing-nav__signup:hover { background: #d6cdf2; }
+.landing-pill--dark, .landing-nav__signin { border-color: #20242c; background: #171a20; color: #f2f3f5; }
+.landing-pill--dark:hover, .landing-nav__signin:hover { border-color: #414757; background: #20242c; }
+.landing-markets__tabs { border-color: #20242c; background: #0e1014; }
+.landing-markets__tabs button { color: #a0a9bb; }
+.landing-markets__tabs button.is-active { background: #252331; color: #c3b6ec; }
+.landing-market-tile { border-color: #20242c; background: #0e1014; color: #f2f3f5; }
+.landing-market-tile:hover { border-color: #7187df; }
+.landing-market-tile__icon { background: #171a20; }
+.landing-preview { border-color: #20242c; background: #0e1014; color: #a0a9bb; box-shadow: none; }
+.landing-preview__browser, .landing-preview__appbar, .landing-preview__pair,
+.landing-preview__volume { border-color: #1b2027; background: #0e1014; color: #a0a9bb; }
+.landing-preview__address, .landing-preview__search, .landing-preview__side { background: #171a20; color: #a0a9bb; }
+.landing-preview__watchlist, .landing-preview__chart, .landing-preview__depth,
+.landing-preview__ticket, .landing-preview__tabs, .landing-preview__watch-row,
+.landing-preview__spread { border-color: #1b2027; }
+.landing-preview__watch-row:first-of-type { background: #171a20; }
+.landing-preview__watch-row, .landing-preview__pair b,
+.landing-preview__tabs strong, .landing-platform__benefits p,
+.landing-product__copy h3, .landing-capabilities__grid strong,
+.landing-footer > span:first-child { color: #f2f3f5; }
+.landing-preview__watch-head, .landing-preview__depth-head,
+.landing-preview__tabs, .landing-platform__benefits span,
+.landing-product__copy span, .landing-capabilities__grid span { color: #a0a9bb; }
+.landing-preview__pair i, .landing-preview__ticket-slider { background: #20242c; }
+.landing-preview__coin { background: #f6a126; }
+.landing-chart-art { background: #0e1014; }
+.landing-chart-art__grid { stroke: #20242c; }
+.landing-chart-art__average { stroke: #7187df; }
+.landing-chart-art g.is-up { fill: #53bd8b; stroke: #53bd8b; }
+.landing-chart-art g.is-down { fill: #d96379; stroke: #d96379; }
+.landing-preview__volume i { background: #53bd8b; }
+.landing-preview__volume i.is-down { background: #d96379; }
+.landing-preview__depth-row { color: #d96379; }
+.landing-preview__depth-row.is-bid { color: #53bd8b; }
+.landing-preview__ticket label { border-color: #20242c; color: #a0a9bb; }
+.landing-preview__ticket label strong { color: #f2f3f5; }
+.landing-products__grid, .landing-product, .landing-capabilities__grid,
+.landing-platform__benefits div { border-color: #20242c; }
+.landing-capabilities__grid { background: #20242c; }
+.landing-product__art { background: #0e1014; }
+.landing-convert { border-color: #20242c; background: #0e1014; }
+
+/* Account access: same visual language for both sign-in and registration states. */
+.access-page {
+  --access-bg: #090b0d;
+  --access-surface: #0e1014;
+  --access-rule: #20242c;
+  --access-text: #f2f3f5;
+  --access-muted: #a0a9bb;
+  --access-accent: #c3b6ec;
+  background: #090b0d;
+}
+.access-page button:focus-visible, .access-page input:focus-visible { outline-color: #c3b6ec; }
+.access-page__field { background: radial-gradient(ellipse 54% 68% at 8% 68%, #25233140, transparent 70%), linear-gradient(90deg, #090b0d 0%, #090b0dbf 48%, transparent 100%); }
+.access-page__field i { background: #7187df1f; }
+.access-page__header { border-color: #20242c; }
+.access-page__brand small, .access-page__markets, .access-page__eyebrow,
+.access-page__form label, .access-page__signal, .access-page__note { color: #a0a9bb; }
+.access-page__mark { color: #f2f3f5; }
+.access-page__markets span, .access-page__markets:hover { color: #c3b6ec; }
+.access-page__signal b { color: #c3b6ec; }
+.access-page__signal i { background: linear-gradient(0deg, #7187df, #343b59); }
+.access-page__panel { background: #0e1014; border-color: #20242c; box-shadow: none; }
+.access-page__tabs { border-color: #20242c; }
+.access-page__tabs button { color: #a0a9bb; }
+.access-page__tabs button.is-active { border-color: #c3b6ec; color: #f2f3f5; }
+.access-page__form input { border-color: #20242c; background: #171a20; color: #f2f3f5; }
+.access-page__form input::placeholder { color: #747f93; }
+.access-page__form input:hover, .access-page__password:focus-within input { border-color: #7187df; }
+.access-page__password button { color: #a0a9bb; }
+.access-page__submit { background: #c3b6ec; color: #090b0d; }
+.access-page__submit:hover { background: #d6cdf2; }
+.access-page__connected-mark { border-color: #20242c; background: #171a20; }
+.access-page .form-message--error { color: #e88798; }
+.access-page .form-message--success { color: #77cea1; }
+
+/* Trade: preserve the existing desk grid and control dimensions. */
+.trade-page { --trade-asset-accent: #c3b6ec; background: #090b0d; color: #f2f3f5; }
+.trade-page[data-asset="BTC"] { --trade-asset-accent: #f6a126; }
+.trade-page[data-asset="ETH"] { --trade-asset-accent: #7187df; }
+.trade-page[data-asset="SUI"] { --trade-asset-accent: #68bde0; }
+.trade-page[data-asset="SOL"] { --trade-asset-accent: #53bd8b; }
+.trade-page[data-asset="DOGE"] { --trade-asset-accent: #e1b83e; }
+.trade-page[data-asset="LTC"] { --trade-asset-accent: #5b86cc; }
+.trade-page[data-asset="MATIC"] { --trade-asset-accent: #8c50e8; }
+.trade-page[data-asset="UNI"] { --trade-asset-accent: #da2fab; }
+.trade-page__inner { background: #090b0d; }
+.trade-page :is(button, input):focus-visible { outline-color: #c3b6ec; }
+.trade-shell-head { border-color: #20242c; }
+.trade-shell-head__brand, .trade-shell-head__context strong { color: #f2f3f5; }
+.trade-shell-head__brand small, .trade-shell-head__context span { color: #a0a9bb; }
+.trade-shell-head__mark { color: #f2f3f5; }
+.trade-shell-head__actions button { background: #171a20; border-color: #20242c; color: #a0a9bb; }
+.trade-shell-head__actions button:hover { border-color: #7187df; color: #f2f3f5; }
+.trade-shell-head__actions .trade-shell-head__account { background: #171a20; border-color: #303541; color: #f2f3f5; }
+.trade-shell-head__actions .trade-shell-head__search { color: #a0a9bb; }
+.trade-shell-banner, .trade-page__notice { border-color: #3a3429; background: #1c1915; color: #b9b1a5; }
+.trade-shell-banner__icon { background: #b9b1a5; color: #1c1915; }
+.trade-shell-banner__end { color: #a0a9bb; }
+.trade-overview__card, .trade-overview__card--collateral,
+.trade-overview__card--pnl, .trade-overview__card--feed,
+.trade-chart, .trade-book, .trade-order, .trade-account {
+  border-color: #20242c;
+  background: #0e1014;
+  box-shadow: none;
+}
+.trade-overview__heading, .trade-panel__eyebrow,
+.trade-account__title > span, .trade-order__header span { color: #a0a9bb; }
+.trade-overview__symbol { color: #a0a9bb; }
+.trade-overview__value, .trade-chart__quote strong,
+.trade-chart__identity h1, .trade-book__title h2,
+.trade-account__title h2, .trade-order__header h2 { color: #f2f3f5; }
+.trade-overview__value small, .trade-overview__card p,
+.trade-overview__metrics span { color: #747f93; }
+.trade-overview__card p b, .trade-overview__metrics strong { color: #f2f3f5; }
+.trade-overview__card--pnl .trade-overview__value.is-positive,
+.trade-chart__quote .is-positive { color: #53bd8b; }
+.trade-overview__card--pnl .trade-overview__value.is-negative,
+.trade-chart__quote .is-negative { color: #d96379; }
+.trade-chart__pair, .trade-chart__modes, .trade-chart__periods,
+.trade-chart__stats > div, .trade-order__sides,
+.trade-order form input { background: #171a20; }
+.trade-chart__pair { color: #f2f3f5; }
+.trade-chart__pair:hover { background: #20242c; }
+.trade-chart__pair-icon i { border-color: #0e1014; }
+.trade-chart__modes button, .trade-chart__periods button { color: #a0a9bb; }
+.trade-chart__modes button.is-active,
+.trade-chart__periods button.is-active { background: #252331; color: #c3b6ec; }
+.trade-chart__change > span { color: #747f93; }
+.trade-chart__change > span:first-child { background: #173329; color: #53bd8b; }
+.trade-chart__change > span:first-child.is-negative { background: #3a202a; color: #d96379; }
+.trade-chart__stats span, .trade-chart__footer { color: #a0a9bb; }
+.trade-chart__stats span i { color: #747f93; }
+.trade-chart__stats strong { color: #f2f3f5; }
+.trade-chart__plot, .trade-chart__empty { background-color: #0e1014; }
+.trade-chart__preview { background: repeating-linear-gradient(0deg, transparent 0, transparent 47px, #1b2027 48px), repeating-linear-gradient(90deg, transparent 0, transparent 86px, #1b2027 87px), #0e1014; }
+.trade-chart__preview span { color: #747f93; }
+.trade-chart__empty-icon { color: var(--trade-asset-accent); }
+.trade-book__title, .trade-book__header, .trade-book__mid,
+.trade-order__header, .trade-order__types,
+.trade-order__estimate, .trade-account__title,
+.trade-account__header { border-color: #1b2027; }
+.trade-book__tabs button.is-active, .trade-order__types button.is-active,
+.trade-account__tabs button.is-active { border-color: #c3b6ec; }
+.trade-book__columns, .trade-account th { color: #747f93; }
+.trade-book__mid { background: #171a20; }
+.trade-book__mid strong, .trade-account td { color: #f2f3f5; }
+.trade-book__side--ask .trade-book__price,
+.trade-account .is-sell { color: #d96379; }
+.trade-book__side--bid .trade-book__price,
+.trade-account .is-buy { color: #53bd8b; }
+.trade-book__side--ask .trade-book__bar { background: #d9637922; }
+.trade-book__side--bid .trade-book__bar { background: #53bd8b22; }
+.trade-order__market { border-color: #303541; color: #a0a9bb; }
+.trade-order__sides { border-color: #20242c; }
+.trade-order__sides button.is-buy { background: #53bd8b; color: #090b0d; }
+.trade-order__sides button.is-sell { background: #d96379; color: #090b0d; }
+.trade-order form input { border-color: #20242c; color: #f2f3f5; }
+.trade-order form input:focus { outline-color: #c3b6ec; }
+.trade-order__submit:not(.is-sell) { background: #53bd8b; color: #090b0d; }
+.trade-order__submit.is-sell { background: #d96379; color: #090b0d; }
+.trade-order__submit:disabled { background: #20242c; color: #747f93; }
+.trade-account__empty button { border-color: #303541; background: #171a20; color: #c3b6ec; }
+.trade-icon-button:hover { border-color: #c3b6ec; color: #c3b6ec; }

@@ -1,7 +1,14 @@
 # APEX Exchange style lock
 
-Updated: 2026-11-10
+Updated: 2026-11-11
 Scope: landing and account access, market directory, balances, trading desk
+
+## Current visual direction · 2026-11-11
+- The user's new `design.md`, derived from the supplied APEX Markets screenshot, supersedes the older lime/orange palette notes below for the trade, landing, and account access pages. Preserve each page's existing layout and content.
+- Canvas `#090b0d`, header `#0b0d10`, panels `#0e1014`, inset controls `#171a20`, fine borders `#20242c`, white text `#f2f3f5`, slate labels `#a0a9bb`, and muted text `#747f93`.
+- Neutral selection uses `#252331` with `#c3b6ec` text or underline. Asset-specific colors remain on icons and trade charts; ETH is `#7187df`. Buy/bid and sell/ask retain semantic `#53bd8b` and `#d96379`.
+- Use a quiet warm-brown unavailable-market notice. Keep landing and auth sections, trade panel geometry, and all unavailable-data placeholders intact. The account access page uses the same palette for sign-in and sign-up.
+- Contrast checked on 2026-11-11: white on canvas 17.75:1; neutral selection on canvas 10.53:1; ETH periwinkle on canvas 5.85:1. Borders are decorative and cannot be the sole state cue.
 
 ## Market page correction · 2026-11-10
 - Show five distinct featured markets in one compact row at desktop and 665px widths. Keep all five accessible on smaller screens with horizontal card scrolling.
