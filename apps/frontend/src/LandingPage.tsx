@@ -614,7 +614,7 @@ export function LandingPage({
               <button
                 type="button"
                 className="landing-pill landing-pill--green"
-                onClick={signedIn ? onMarkets : onSignUp}
+                onClick={onMarkets}
               >
                 Explore markets <span aria-hidden="true">↗</span>
               </button>
