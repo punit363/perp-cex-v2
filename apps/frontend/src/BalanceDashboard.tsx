@@ -44,7 +44,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
     ? Math.min(100, Math.max(0, Number((reserved * 10_000n) / total) / 100))
     : 0;
   const availablePercent = hasBalance && total && total > 0n ? 100 - reservedPercent : 0;
-  const display = (amount: bigint | null) => amount === null ? "—" : `$${formatAmount(amount)}`;
+  const display = (amount: bigint | null) => amount === null ? "–" : `$${formatAmount(amount)}`;
 
   async function addBalance(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -121,7 +121,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
                   <circle cx="50" cy="50" r="44" fill="none" stroke="#303937" strokeWidth="7" />
                   {total && total > 0n && <circle cx="50" cy="50" r="44" fill="none" stroke="#59c989" strokeWidth="7" pathLength="100" strokeDasharray={`${availablePercent} ${100 - availablePercent}`} transform="rotate(-90 50 50)" />}
                 </svg>
-                <div><strong>{hasBalance ? `${availablePercent.toFixed(0)}%` : "—"}</strong><span>Available</span></div>
+                <div><strong>{hasBalance ? `${availablePercent.toFixed(0)}%` : "–"}</strong><span>Available</span></div>
               </div>
               <div className="wallet-allocation__legend">
                 <div><span className="wallet-allocation__dot is-available" /><span>Available</span><strong>{display(available)}</strong></div>
