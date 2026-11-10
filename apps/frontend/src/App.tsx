@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { MarketDashboard, wsUrl } from "./MarketDashboard";
 import { BalanceDashboard } from "./BalanceDashboard";
 import { MarketTradePage } from "./MarketTradePage";
+import { LandingPage } from "./LandingPage";
+import { AccessPage, type AccessMode } from "./AccessPage";
 import "./styles.css";
 
-type AuthMode = "signin" | "register";
-type Section = "home" | "markets" | "balances" | "trade";
+type AuthMode = AccessMode;
+type Section = "home" | "access" | "markets" | "balances" | "trade";
 type Session = { username: string; token: string };
 type Balance = { available: string; reserved: string };
 type ApiEnvelope = {
@@ -20,6 +22,7 @@ type ApiEnvelope = {
 function sectionFromPath(pathname: string): Section {
   const path = pathname.replace(/\/$/, "");
   if (path === "/markets") return "markets";
+  if (path === "/access") return "access";
   if (path === "/balances") return "balances";
   if (path.startsWith("/market/") && path.length > 8) return "trade";
   return "home";
@@ -31,7 +34,7 @@ function marketIdFromPath(pathname: string) {
 }
 
 const API_BASE =
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.port === "3000"
+  (location.hostname === "localhost" || location.hostname === "127.0.0.1")
     ? "http://localhost:8000/api/v1"
     : "/api/v1";
 
@@ -43,16 +46,6 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
         <path d="M19 11h7v7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </span>
-  );
-}
-
-function EyeIcon({ visible }: { visible: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M2.5 12s3.4-5.5 9.5-5.5 9.5 5.5 9.5 5.5-3.4 5.5-9.5 5.5S2.5 12 2.5 12Z" stroke="currentColor" strokeWidth="1.8" />
-      <circle cx="12" cy="12" r="2.8" stroke="currentColor" strokeWidth="1.8" />
-      {!visible && <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />}
-    </svg>
   );
 }
 
@@ -173,9 +166,21 @@ export function App() {
 
   function showSignIn() {
     returnToMarket.current = section === "trade" ? marketId : null;
-    navigate("home");
+    navigate("access");
     setMode("signin");
-    requestAnimationFrame(() => usernameInput.current?.focus());
+    requestAnimationFrame(() => {
+      usernameInput.current?.focus({ preventScroll: true });
+    });
+  }
+
+  function showSignUp() {
+    navigate("access");
+    setMode("register");
+    setError("");
+    setMessage("");
+    requestAnimationFrame(() => {
+      usernameInput.current?.focus({ preventScroll: true });
+    });
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -226,13 +231,13 @@ export function App() {
 
   return (
     <div className="site-shell">
-      <header className="topbar">
+      {section === "balances" && <header className="topbar">
         <div className="topbar__left">
           <button className="brand brand--header" type="button" onClick={() => navigate("home")} aria-label="Apex Exchange home">
             <BrandMark compact /><span>APEX <span className="brand__muted">EXCHANGE</span></span>
           </button>
           <nav className="nav" aria-label="Main navigation">
-            <button type="button" className={"nav__item" + (section === "markets" ? " is-active" : "")} onClick={() => navigate("markets")}>Markets</button>
+            <button type="button" className="nav__item" onClick={() => navigate("markets")}>Markets</button>
             <button type="button" className={"nav__item" + (section === "balances" ? " is-active" : "")} onClick={showBalances}>Balances</button>
           </nav>
         </div>
@@ -244,68 +249,9 @@ export function App() {
             ? <><div className="topbar__identity"><strong>{session.username}</strong><span>Trading account</span></div><button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Logout</button></>
             : <button type="button" className="topbar__action" onClick={showSignIn}>Sign In</button>}
         </div>
-      </header>
+      </header>}
 
-      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : <main className="landing">
-        <section className="hero-panel" aria-labelledby="hero-heading">
-          <div className="hero-panel__inner">
-            <div className="hero-brand"><BrandMark /><span>APEX <span className="brand__muted">EXCHANGE</span></span></div>
-            <div className="hero-copy">
-              <h1 id="hero-heading">Trade perpetual assets with <em>precision.</em></h1>
-              <p>Explore live market depth, a central limit order book, and position management in one focused trading interface.</p>
-              <div className="feature-grid" aria-label="Exchange features">
-                <div className="feature-card">
-                  <span className="feature-card__label">24H TRADE VOLUME</span>
-                  <strong>—</strong>
-                </div>
-                <div className="feature-card">
-                  <span className="feature-card__label">MATCHING LATENCY</span>
-                  <strong className="feature-card__accent">—</strong>
-                </div>
-              </div>
-            </div>
-            <div className="hero-footer"><span className="hero-footer__dot" /> Matching engine and settlement pipeline</div>
-          </div>
-        </section>
-
-        <section className="access-panel" aria-label="Account access">
-          <div className="account-card" id="account">
-            {session ? (
-              <>
-                <div className="account-card__eyebrow">Account connected</div>
-                <div className="account-card__icon"><BrandMark compact /></div>
-                <h2>Welcome, {session.username}</h2>
-                <p className="account-card__intro">Your trading account is ready in this session.</p>
-                {message && <p className="form-message form-message--success" role="status">{message}</p>}
-                <button type="button" className="primary-button" onClick={showBalances}>View Balances <span aria-hidden="true">↗</span></button>
-                <p className="account-card__footnote">Simulated trading environment</p>
-              </>
-            ) : (
-              <>
-                <h2>{mode === "signin" ? "Welcome Back" : "Create an account"}</h2>
-                <p className="account-card__intro">{mode === "signin" ? "Sign in to connect your trading interface" : "Register to access the trading interface"}</p>
-                <div className="auth-tabs" role="group" aria-label="Account action">
-                  <button type="button" aria-pressed={mode === "signin"} className={mode === "signin" ? "is-active" : ""} onClick={() => { setMode("signin"); setError(""); setMessage(""); }}>Sign In</button>
-                  <button type="button" aria-pressed={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => { setMode("register"); setError(""); setMessage(""); }}>Register</button>
-                </div>
-                <form className="auth-form" onSubmit={submitAuth}>
-                  <label htmlFor="username">EMAIL OR USER ID</label>
-                  <input ref={usernameInput} id="username" name="username" type="text" autoComplete="username" placeholder="Enter your username" value={username} onChange={(event) => setUsername(event.target.value)} required />
-                  <label htmlFor="password">PASSWORD</label>
-                  <div className="password-field">
-                    <input id="password" name="password" type={showPassword ? "text" : "password"} autoComplete={mode === "signin" ? "current-password" : "new-password"} placeholder={mode === "signin" ? "Enter your password" : "Create a password"} value={password} onChange={(event) => setPassword(event.target.value)} required />
-                    <button type="button" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}><EyeIcon visible={showPassword} /></button>
-                  </div>
-                  {error && <p className="form-message form-message--error" role="alert">{error}</p>}
-                  {message && <p className="form-message form-message--success" role="status">{message}</p>}
-                  <button className="primary-button" type="submit" disabled={busy}>{busy ? "Connecting…" : mode === "signin" ? "Connect Account" : "Create Account"}</button>
-                </form>
-                <p className="account-card__footnote">Simulated trading environment</p>
-              </>
-            )}
-          </div>
-        </section>
-      </main>}
+      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} onHome={() => navigate("home")} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} balance={balance} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onMarkets={() => navigate("markets")} onBalances={showBalances} onHome={() => navigate("home")} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : section === "access" ? <AccessPage mode={mode} username={username} password={password} showPassword={showPassword} busy={busy} message={message} error={error} sessionUsername={session?.username ?? null} usernameInput={usernameInput} onHome={() => navigate("home")} onMarkets={() => navigate("markets")} onBalances={showBalances} onModeChange={(nextMode) => { setMode(nextMode); setError(""); setMessage(""); }} onUsernameChange={setUsername} onPasswordChange={setPassword} onTogglePassword={() => setShowPassword((current) => !current)} onSubmit={submitAuth} /> : <LandingPage signedIn={Boolean(session)} username={session?.username ?? null} onMarkets={() => navigate("markets")} onMarket={navigateToMarket} onSignIn={showSignIn} onSignUp={showSignUp} onBalances={showBalances} />}
     </div>
   );
 }

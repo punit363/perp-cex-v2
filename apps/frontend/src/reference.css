@@ -125,7 +125,7 @@
 .trade-account__tabs { overflow-x: auto; scrollbar-width: none; }
 .trade-account__tabs::-webkit-scrollbar { display: none; }
 
-@media (max-width: 1370px) {
+@media (max-width: 1120px) {
   .trade-market-head { flex-wrap: wrap; row-gap: 7px; }
   .trade-market-head__facts { flex: 1 1 100%; justify-content: flex-start; padding-top: 6px; border-top: 1px solid #252c35; }
   .trade-page { height: auto; min-height: calc(100dvh - 58px); overflow: visible; }
