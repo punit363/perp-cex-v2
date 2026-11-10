@@ -50,13 +50,11 @@ export const samplePremium = (
   );
 };
 
-// Signed amount is positive for a recipient and negative for a payer
-// Runs for each funding payer whose shortfall was allocated insurance coverage
+// Signed amount is positive for a recipient and negative for a payer.
 export const calculateFundingPayments = (
   participants: FundingParticipant[],
   indexPrice: bigint,
-  rate: bigint,
-  insuranceAvailable = 0n
+  rate: bigint
 ): FundingBatch => {
   if (rate === 0n)
     return { payments: [], insuranceUsed: 0n, uncoveredShortfall: 0n };
@@ -93,6 +91,7 @@ export const calculateFundingPayments = (
     "floor"
   );
 
+  //allocate the average funding amount to each payer position owner based on their
   const allocate = (side: FundingParticipant[], totalQuantity: bigint) => {
     let allocated = 0n;
     const amounts = side.map(({ position }) => {
@@ -111,27 +110,23 @@ export const calculateFundingPayments = (
     return amounts;
   };
   const payerAmounts = allocate(payers, payerQuantity);
-  let remainingInsurance = insuranceAvailable;
-  let insuranceUsed = 0n;
   let uncoveredShortfall = 0n;
   const payerPayments = payers.map(({ userId, account, position }, index) => {
     const requestedAmount = payerAmounts[index]!;
     const spendable =
       account.collateral.available > 0n ? account.collateral.available : 0n;
+      //calculate the payable funding amount available on user
     const availableDebit =
       requestedAmount < spendable ? requestedAmount : spendable;
-    const remaining = requestedAmount - availableDebit;
+    const remaining = requestedAmount - availableDebit; //deficit amount unavailble on user
     const marginCapacity =
       position.reserved_margin < account.collateral.reserved
         ? position.reserved_margin
         : account.collateral.reserved;
     const marginDebit = remaining < marginCapacity ? remaining : marginCapacity;
+    //remove the margin from the deficit amount to check how mucht the user falls short
     const shortfall = remaining - marginDebit;
-    const insuranceCovered =
-      shortfall < remainingInsurance ? shortfall : remainingInsurance;
-    remainingInsurance -= insuranceCovered;
-    insuranceUsed += insuranceCovered;
-    const unpaid = shortfall - insuranceCovered;
+    const unpaid = shortfall;
     uncoveredShortfall += unpaid;
     return {
       userId,
@@ -139,10 +134,11 @@ export const calculateFundingPayments = (
       requestedAmount,
       availableDebit,
       marginDebit,
-      insuranceCovered,
+      insuranceCovered: 0n,
       uncoveredShortfall: unpaid,
     };
   });
+  //update the reciever side on the funding amount
   const receiverPool = pool - uncoveredShortfall;
   const receiverAmounts = (() => {
     let allocated = 0n;
@@ -177,7 +173,20 @@ export const calculateFundingPayments = (
         payment.insuranceCovered !== 0n ||
         payment.uncoveredShortfall !== 0n
     ),
-    insuranceUsed,
+    insuranceUsed: 0n,
     uncoveredShortfall,
   };
 };
+
+
+/*
+On every mark price update from the market_data service orderbook is sampled for a new funding rate
+funding rate can be fixed by admin or can be calculated instead
+on every 8th hour the market data service sends a request to engine to execute the funding
+the samples collected are averaged and funding payment amounts are calculated
+if a user does not have enough collateral they are liquidated
+the calculated amounts are then transfered from payee to reciever
+
+Positive premium: the perp book trades above spot, so longs will pay shorts.
+Negative premium: the perp book trades below spot, so shorts will pay longs.
+*/

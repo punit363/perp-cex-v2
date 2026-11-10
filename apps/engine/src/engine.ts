@@ -966,20 +966,9 @@ class Engine {
     const batch = calculateFundingPayments(
       participants,
       indexPrice,
-      rate,
-      this.insuranceFund.available()
+      rate
     );
     const { payments } = batch;
-    const insuranceChanges = payments
-      .filter((payment) => payment.insuranceCovered > 0n)
-      .map((payment) =>
-        this.insuranceFund.coverFundingShortfall(
-          payment.insuranceCovered,
-          market_id,
-          payment.userId,
-          interval_end_ms
-        )
-      );
     for (const payment of payments) {
       const account = this.accounts.get(payment.userId)!;
       account.collateral.available +=
@@ -988,6 +977,9 @@ class Engine {
         account.collateral.reserved -= payment.marginDebit;
         account.positions.get(market_id)!.reserved_margin -=
           payment.marginDebit;
+      }
+      if (payment.uncoveredShortfall > 0n) {
+        account.positions.get(market_id)!.state = PositionState.LIQUIDATING;
       }
     }
     state.lastSettledIntervalMs = interval_end_ms;
@@ -1008,7 +1000,10 @@ class Engine {
           };
         }),
         positions: payments
-          .filter((payment) => payment.marginDebit > 0n)
+          .filter(
+            (payment) =>
+              payment.marginDebit > 0n || payment.uncoveredShortfall > 0n
+          )
           .map(({ userId }) => ({
             user_id: userId,
             market_id,
@@ -1054,9 +1049,6 @@ class Engine {
           insurance_covered: payment.insuranceCovered,
           uncovered_shortfall: payment.uncoveredShortfall,
         })),
-        ...(insuranceChanges.length > 0 && {
-          insurance_fund: insuranceChanges,
-        }),
       },
     });
     this.emitFundingState(market_id);
