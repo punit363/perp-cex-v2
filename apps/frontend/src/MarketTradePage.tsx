@@ -249,6 +249,8 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const [depthError, setDepthError] = useState("");
   const [depthRefresh, setDepthRefresh] = useState(0);
   const [feed, setFeed] = useState<"connecting" | "connected" | "offline">("offline");
+  const [markExpiresAt, setMarkExpiresAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now);
   const [lastPrice, setLastPrice] = useState<string | null>(null);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [candles, setCandles] = useState<StoredCandle[]>([]);
@@ -263,6 +265,11 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const bookUpdateVersion = useRef(0);
 
   useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!token || !market || preview) { setPositionSummary(null); return; }
     const controller = new AbortController();
     api<{ engine_response?: { data?: Position } }>(`/market/position/${encodeURIComponent(market.market_id)}`, { headers: { token }, signal: controller.signal })
@@ -273,7 +280,7 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
 
   useEffect(() => {
     bookUpdateVersion.current = 0;
-    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
+    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setMarkExpiresAt(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
     if (previewPairs.includes(marketId)) {
       setMarket({ market_id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
       setPreview(true); setMarketLoading(false); return;
@@ -389,6 +396,9 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
           } else if (data.event_type === "TICKER") {
             const last = typeof data.last_traded_price === "string" ? data.last_traded_price : null;
             if (last) setLastPrice(last);
+            if (typeof data.mark_expires_at_ms === "number" && Number.isFinite(data.mark_expires_at_ms)) {
+              setMarkExpiresAt(data.mark_expires_at_ms);
+            }
             if (typeof data.trading_halted === "boolean") {
               setMarket((current) => current ? { ...current, trading_halted: data.trading_halted as boolean } : current);
             }
@@ -408,6 +418,16 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const current = trades.at(-1)?.price ?? lastPrice;
   const icon = icons[label.base];
   const assetAccent = ({ BTC: "#f6a126", ETH: "#7187df", SUI: "#68bde0", SOL: "#53bd8b", DOGE: "#e1b83e", LTC: "#5b86cc", MATIC: "#8c50e8", UNI: "#da2fab" } as Record<string, string>)[label.base] ?? "#c3b6ec";
+  const markFresh = feed === "connected" && markExpiresAt !== null && markExpiresAt >= now;
+  const feedMessage = preview
+    ? "Preview market · Live prices, depth, and orders appear when this pair is listed for trading."
+    : market?.trading_halted
+      ? "Trading is currently halted for this market."
+      : feed !== "connected"
+        ? feed === "connecting" ? "Connecting to market WebSocket…" : "Market WebSocket disconnected · Waiting for live updates."
+        : markFresh
+          ? "Market WebSocket connected · Fresh mark price received."
+          : "Market WebSocket connected · No fresh mark price; new orders may be rejected.";
 
   const collateral = balance ? Number(balance.available) + Number(balance.reserved) : null;
   const positionPnl = positionSummary ? Number(positionSummary.unrealized_pnl) : null;
@@ -419,7 +439,7 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
         <div className="trade-shell-head__context"><strong>Trading desk</strong><span>{marketLoading ? "Loading market" : `${label.base} / ${label.quote} perpetual market`}</span></div>
         <div className="trade-shell-head__actions"><button type="button" className="trade-shell-head__search" onClick={onMarkets}><span aria-hidden="true">⌕</span> Browse markets <kbd>↗</kbd></button><button type="button" onClick={onBalances}>Balances</button>{token ? <button type="button" className="trade-shell-head__account" onClick={onBalances}>Account ↗</button> : <button type="button" className="trade-shell-head__account" onClick={onSignIn}>Sign in ↗</button>}</div>
       </header>
-      <div className="trade-shell-banner" role="status"><span className="trade-shell-banner__icon">!</span><span>{preview ? "Preview market · Live prices, depth, and orders appear when this pair is listed for trading." : market?.trading_halted ? "Trading is currently halted for this market." : feed === "connected" ? "Market feed connected · Trading data updates as orders match." : "Connecting to market feed · The latest available data is shown below."}</span><span className="trade-shell-banner__end">APEX / PERPETUAL</span></div>
+      <div className="trade-shell-banner" role="status"><span className="trade-shell-banner__icon">!</span><span>{feedMessage}</span><span className="trade-shell-banner__end">APEX / PERPETUAL</span></div>
       {marketError && <div className="trade-page__notice" role="status">{marketError}</div>}
       <div className="trade-desk">
       <div className="trade-overview">
