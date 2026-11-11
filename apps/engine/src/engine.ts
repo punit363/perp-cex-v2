@@ -39,6 +39,7 @@ import {
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
+import { isSupportedMarketSlug } from "commons/src/supported-markets";
 import type { DBEventInput } from "commons/src/engine-event";
 import {
   OrderSide,
@@ -67,6 +68,7 @@ import {
 
 class Engine {
   private markets = new Map<string, MarketContext>();
+  private tradableMarketIds = new Set<string>();
   private accounts = new AccountStore([]);
   private liquidationQueue = new Map<
     string,
@@ -95,6 +97,9 @@ class Engine {
   } | null = null;
 
   private constructor(markets: MarketDefinition[]) {
+    this.tradableMarketIds = new Set(
+      markets.filter(({ slug }) => isSupportedMarketSlug(slug)).map(({ market_id }) => market_id)
+    );
     let restoredSnapshot: EngineSnapshot | undefined;
     const quotes = new Map(
       markets.map(({ market_id, slug }) => [
@@ -258,7 +263,7 @@ class Engine {
 
   static create = async (): Promise<Engine> => {
     const { MarketRepo } = await import("db/repositories/market.repo");
-    const markets = await MarketRepo.listMarkets();
+    const markets = await MarketRepo.listAllMarkets();
     return new Engine(markets);
   };
 
@@ -551,12 +556,17 @@ class Engine {
         const { last_trade_id, last_traded_price } =
           orderbook.fetchMarketData();
         const mark_price = this.markets.get(market_id)?.markPrice;
+        const mark_metadata = this.markets.get(market_id)?.markPriceMetadata;
         this.emitWsEvent({
           event_type: "TICKER",
           data: {
             market_id,
             ...(mark_price !== undefined && {
               mark_price: formatFixed(mark_price),
+            }),
+            ...(mark_metadata && {
+              mark_expires_at_ms:
+                mark_metadata.source_timestamp + this.MAX_MARK_PRICE_AGE_MS,
             }),
             ...(last_trade_id && {
               last_trade_id,
@@ -817,6 +827,9 @@ class Engine {
   ): EngineResponse => {
     const { market_id, slug } = request;
     const quote = slug.split("-")[1]!;
+    if (this.replayTimestamp === null && !isSupportedMarketSlug(slug)) {
+      return engine_response("Market is not supported by the USDT collateral and two-venue price feed", 0);
+    }
     if (this.markets.has(market_id)) {
       if (this.markets.get(market_id)?.quote !== quote) {
         return engine_response(
@@ -824,9 +837,11 @@ class Engine {
           0
         );
       }
+      if (isSupportedMarketSlug(slug)) this.tradableMarketIds.add(market_id);
       return engine_response("Market already registered", 1, { market_id });
     }
     this.markets.set(market_id, this.createMarketContext(market_id, quote));
+    if (isSupportedMarketSlug(slug)) this.tradableMarketIds.add(market_id);
     return engine_response("Market registered", 1, { market_id });
   };
 
@@ -1157,6 +1172,9 @@ class Engine {
       const orderbook = this.markets.get(market_id)?.book;
       if (!orderbook) {
         throw new Error("Incorrect Market ID");
+      }
+      if (this.replayTimestamp === null && !this.tradableMarketIds.has(market_id)) {
+        throw new Error("Market is no longer available for new orders");
       }
       if (this.markets.get(market_id)?.halted) {
         throw new Error("Trading is halted for this market");

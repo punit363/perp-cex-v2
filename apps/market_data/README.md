@@ -30,8 +30,10 @@ USD or USDT legs on the **same venue**. It averages the two venue midprices.
 If either source or a required leg is unavailable, the producer stops sending
 updates; the engine's five-second mark freshness check then rejects new orders.
 
-As of November 1, 2026, public source discovery and a live quote probe produced
-marks for 17 of the 18 listed markets. `MATIC-ETH` has no current MATIC spot
-product on either venue. Both exchanges list POL instead, but this service does
-not treat POL as MATIC. Renaming or migrating that market requires an explicit
-product decision.
+The exchange currently lists 13 USDT-quoted markets whose two-venue spot routes
+were verified. ETH-quoted markets are excluded because the engine's collateral,
+margin, fees, funding and PnL all settle in USDT. MATIC is excluded because the
+price producer has no MATIC spot product from both venues. Existing database
+records for delisted markets remain available for recovery and trade history;
+new orders for those market IDs are rejected. Runtime quote freshness still
+determines whether any listed market is open for trading.

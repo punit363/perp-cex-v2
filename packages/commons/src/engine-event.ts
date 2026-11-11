@@ -264,6 +264,7 @@ const TickerEventSchema = WSMetadataSchema.extend({
   data: z.object({
     market_id: IdSchema,
     mark_price: DecimalSchema.optional(),
+    mark_expires_at_ms: z.number().int().nonnegative().optional(),
     last_traded_price: DecimalSchema.optional(),
     last_trade_id: IdSchema.optional(),
     best_bid: DecimalSchema.optional(),

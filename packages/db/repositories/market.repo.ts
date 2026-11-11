@@ -1,4 +1,29 @@
 import { prisma } from "..";
+import { SUPPORTED_MARKET_SLUGS } from "commons/src/supported-markets";
+
+const marketFields = {
+  market_id: true,
+  slug: true,
+  imageUrl: true,
+  mark_price: true,
+  last_traded_price: true,
+  trading_halted: true,
+  maintenance_margin_rate: true,
+  liquidation_fee_rate: true,
+  max_leverage: true,
+  max_liquidation_quantity: true,
+  funding_fixed_rate: true,
+  funding_last_rate: true,
+  last_funding_ms: true,
+  next_funding_ms: true,
+} as const;
+
+const findMarkets = (listedOnly: boolean) =>
+  prisma.market.findMany({
+    where: listedOnly ? { slug: { in: [...SUPPORTED_MARKET_SLUGS] } } : undefined,
+    select: marketFields,
+    orderBy: { slug: "asc" },
+  });
 
 export const MarketRepo = {
   ensureMarket: async (slug: string, imageUrl: string) => {
@@ -9,47 +34,14 @@ export const MarketRepo = {
       return prisma.market.findUniqueOrThrow({ where: { slug } });
     }
   },
-  listMarkets: async () => {
-    return prisma.market.findMany({
-      select: {
-        market_id: true,
-        slug: true,
-        imageUrl: true,
-        mark_price: true,
-        last_traded_price: true,
-        trading_halted: true,
-        maintenance_margin_rate: true,
-        liquidation_fee_rate: true,
-        max_leverage: true,
-        max_liquidation_quantity: true,
-        funding_fixed_rate: true,
-        funding_last_rate: true,
-        last_funding_ms: true,
-        next_funding_ms: true,
-      },
-      orderBy: { slug: "asc" },
-    });
-  },
+  listMarkets: () => findMarkets(true),
+  // Recovery must retain delisted market IDs referenced by snapshots and history.
+  listAllMarkets: () => findMarkets(false),
 
   getMarket: async (market_id: string) => {
     return prisma.market.findUnique({
       where: { market_id },
-      select: {
-        market_id: true,
-        slug: true,
-        imageUrl: true,
-        mark_price: true,
-        last_traded_price: true,
-        trading_halted: true,
-        maintenance_margin_rate: true,
-        liquidation_fee_rate: true,
-        max_leverage: true,
-        max_liquidation_quantity: true,
-        funding_fixed_rate: true,
-        funding_last_rate: true,
-        last_funding_ms: true,
-        next_funding_ms: true,
-      },
+      select: marketFields,
     });
   },
 

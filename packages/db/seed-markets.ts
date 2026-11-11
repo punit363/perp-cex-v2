@@ -1,19 +1,11 @@
-import { readdir } from "node:fs/promises";
 import { prisma } from "./index";
-
-const iconDirectory = new URL("../../apps/frontend/public/icons/", import.meta.url);
-const ethQuotedAssets = new Set(["AAVE", "DOT", "GRT", "MATIC", "SOL"]);
-const quoteAssets = new Set(["USD", "USDT"]);
+import { SUPPORTED_MARKET_SLUGS } from "commons/src/supported-markets";
 
 async function seedMarkets() {
-  const icons = (await readdir(iconDirectory)).filter((file) => /^[a-z0-9]+_coin\.png$/.test(file));
-  const markets = icons
-    .map((file) => ({ symbol: file.replace(/_coin\.png$/, "").toUpperCase(), file }))
-    .filter(({ symbol }) => !quoteAssets.has(symbol))
-    .map(({ symbol, file }) => ({
-      slug: `${symbol}-${ethQuotedAssets.has(symbol) ? "ETH" : "USDT"}`,
-      imageUrl: `/icons/${file}`,
-    }));
+  const markets = SUPPORTED_MARKET_SLUGS.map((slug) => ({
+    slug,
+    imageUrl: `/icons/${slug.split("-")[0]!.toLowerCase()}_coin.png`,
+  }));
 
   const existing = await prisma.market.findMany({
     where: { slug: { in: markets.map(({ slug }) => slug) } },

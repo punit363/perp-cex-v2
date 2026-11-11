@@ -5,6 +5,7 @@ import { AppError } from "../utils/error";
 import { MarketRepo } from "db/repositories/market.repo";
 import { loopback } from "../loopback";
 import type { EngineResponse } from "commons/src";
+import { isSupportedMarketSlug } from "commons/src/supported-markets";
 
 async function addMarket(req: Request, res: Response): Promise<void> {
   try {
@@ -17,6 +18,9 @@ async function addMarket(req: Request, res: Response): Promise<void> {
 
     if (typeof market !== "string" || !/^[A-Z0-9]+-[A-Z0-9]+$/.test(market)) {
       throw new AppError("Market must be an uppercase BASE-QUOTE pair", 400);
+    }
+    if (!isSupportedMarketSlug(market)) {
+      throw new AppError("Market is not supported by the USDT collateral and two-venue price feed", 400);
     }
 
     const response = await MarketRepo.ensureMarket(market, "");

@@ -29,7 +29,7 @@ export type Market = {
   last_traded_price: string | null;
   trading_halted?: boolean;
 };
-type Quote = { mark_price?: string; last_traded_price?: string };
+type Quote = { mark_price?: string; mark_expires_at_ms?: number; last_traded_price?: string };
 type ViewMarket = Market & { base: string; quote: string; preview: boolean };
 type Filter = "All" | "Trends" | "Favorites" | "Top Gainers" | "Top Losers";
 type Stats = {
@@ -64,21 +64,16 @@ export const icons: Record<string, string> = {
 export const previewPairs = [
   "BTC-USDT",
   "ETH-USDT",
-  "SUI-USDT",
-  "SOL-USDT",
   "DOGE-USDT",
   "LTC-USDT",
-  "MATIC-USDT",
   "UNI-USDT",
   "ADA-USDT",
   "AVAX-USDT",
   "LINK-USDT",
   "XRP-USDT",
-  "AAVE-ETH",
-  "DOT-ETH",
-  "GRT-ETH",
-  "MATIC-ETH",
-  "SOL-ETH",
+  "BCH-USDT",
+  "FIL-USDT",
+  "OP-USDT",
   "USDC-USDT",
 ];
 const names: Record<string, string> = {
@@ -334,6 +329,7 @@ export function MarketDashboard({
     "idle" | "connecting" | "connected" | "offline"
   >("idle");
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [now, setNow] = useState(Date.now);
   const [candles, setCandles] = useState<Record<string, StoredCandle[]>>({});
   const tickerTrack = useRef<HTMLDivElement>(null);
   const [tickerEnds, setTickerEnds] = useState({ start: true, end: false });
@@ -343,6 +339,11 @@ export function MarketDashboard({
   const [favorites, setFavorites] = useState<string[]>([]);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const marketIds = markets.map((market) => market.market_id).join("|");
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -434,6 +435,10 @@ export function MarketDashboard({
               typeof payload.mark_price === "string"
                 ? payload.mark_price
                 : undefined,
+            markExpiry =
+              typeof payload.mark_expires_at_ms === "number" && Number.isFinite(payload.mark_expires_at_ms)
+                ? payload.mark_expires_at_ms
+                : undefined,
             trade =
               typeof payload.last_traded_price === "string"
                 ? payload.last_traded_price
@@ -449,12 +454,13 @@ export function MarketDashboard({
                   : market,
               ),
             );
-          if (mark || trade) {
+          if (mark || trade || markExpiry !== undefined) {
             setQuotes((current) => ({
               ...current,
               [id]: {
                 ...current[id],
                 mark_price: mark ?? current[id]?.mark_price,
+                mark_expires_at_ms: markExpiry ?? current[id]?.mark_expires_at_ms,
                 last_traded_price: trade ?? current[id]?.last_traded_price,
               },
             }));
@@ -502,7 +508,7 @@ export function MarketDashboard({
       statsFor(candles[market.market_id] ?? [], days),
     ]),
   );
-  const featured: ViewMarket[] = ["BTC", "ETH", "SUI", "SOL", "DOGE"]
+  const featured: ViewMarket[] = ["BTC", "ETH", "DOGE", "ADA", "AVAX"]
     .map(
       (base) =>
         all.find((market) => market.base === base && market.quote === "USDT") ??
@@ -566,6 +572,17 @@ export function MarketDashboard({
         : [...current, id],
     );
 
+  const hasFreshMark = Object.values(quotes).some(
+    (quote) => quote.mark_expires_at_ms !== undefined && quote.mark_expires_at_ms >= now,
+  );
+  const liveMarks = feed === "connected" && hasFreshMark;
+  const feedLabel = liveMarks ? "Live" : feed === "connected" ? "No live marks" : "Offline";
+  const feedTitle = liveMarks
+    ? "WebSocket connected and fresh market marks received"
+    : feed === "connected"
+      ? "WebSocket connected; no fresh market marks received"
+      : "Market WebSocket unavailable";
+
   return (
     <main className="quant-page">
       <div className="quant-shell">
@@ -583,14 +600,10 @@ export function MarketDashboard({
           </div>
           <div className="quant-header__right">
             <span
-              className={`quant-feed ${feed === "connected" ? "is-connected" : ""}`}
-              title={
-                feed === "connected"
-                  ? "Live market feed connected"
-                  : "Live market feed unavailable"
-              }
+              className={`quant-feed ${liveMarks ? "is-connected" : ""}`}
+              title={feedTitle}
             >
-              <i /> {feed === "connected" ? "Live" : "Offline"}
+              <i /> {feedLabel}
             </span>
             <button
               type="button"
