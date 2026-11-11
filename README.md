@@ -1,4 +1,8 @@
-# Turborepo starter
+# Apex Exchange
+
+For a first single-server AWS deployment, follow the [EC2 deployment guide](deploy/EC2.md).
+
+## Legacy Turborepo notes
 
 This Turborepo starter is maintained by the Turborepo core team.
 
