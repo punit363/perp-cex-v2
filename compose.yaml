@@ -1,5 +1,8 @@
 x-runtime: &runtime
   image: apex-runtime:local
+  build:
+    context: .
+    target: runtime
   restart: unless-stopped
   environment: &runtime-environment
     DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
@@ -35,9 +38,6 @@ services:
 
   migrate:
     <<: *runtime
-    build:
-      context: .
-      target: runtime
     restart: "no"
     working_dir: /app/packages/db
     command: ["bun", "./node_modules/prisma/build/index.js", "migrate", "deploy", "--config", "prisma7.config.ts"]
