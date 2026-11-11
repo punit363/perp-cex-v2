@@ -10,6 +10,37 @@ type AuthMode = AccessMode;
 type Section = "home" | "access" | "markets" | "balances" | "trade";
 type Session = { username: string; token: string };
 type Balance = { available: string; reserved: string };
+const SESSION_KEY = "apex.exchange.session";
+
+function readSession(): Session | null {
+  try {
+    const value = sessionStorage.getItem(SESSION_KEY);
+    if (!value) return null;
+    const session: unknown = JSON.parse(value);
+    if (typeof session === "object" && session !== null &&
+      "username" in session && typeof session.username === "string" && session.username &&
+      "token" in session && typeof session.token === "string" && session.token) {
+      return { username: session.username, token: session.token };
+    }
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+  return null;
+}
+
+function storeSession(session: Session | null) {
+  try {
+    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Continue with the in-memory session if storage is unavailable.
+  }
+}
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
 type ApiEnvelope = {
   status?: string;
   message?: string;
@@ -53,7 +84,7 @@ async function request(path: string, options: RequestInit): Promise<ApiEnvelope>
   const response = await fetch(API_BASE + path, options);
   const payload = (await response.json().catch(() => null)) as ApiEnvelope | null;
   if (!response.ok || payload?.status === "FAILURE") {
-    throw new Error(payload?.message || "Request failed (" + response.status + ")");
+    throw new ApiError(payload?.message || "Request failed (" + response.status + ")", response.status);
   }
   return payload ?? {};
 }
@@ -68,13 +99,13 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(readSession);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceError, setBalanceError] = useState("");
   const [accountEventRevision, setAccountEventRevision] = useState(0);
   const usernameInput = useRef<HTMLInputElement>(null);
-  const activeToken = useRef<string | null>(null);
+  const activeToken = useRef<string | null>(session?.token ?? null);
   const returnToMarket = useRef<string | null>(null);
 
   useEffect(() => {
@@ -113,12 +144,25 @@ export function App() {
       setBalance(engineResult.data);
     } catch (cause) {
       if (activeToken.current !== token) return;
+      if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+        activeToken.current = null;
+        storeSession(null);
+        setSession(null);
+        setBalance(null);
+        setBalanceLoading(false);
+        setMessage("Your session expired. Sign in again.");
+        return;
+      }
       setBalance(null);
       setBalanceError(cause instanceof Error ? cause.message : "Could not load balance.");
     } finally {
       if (activeToken.current === token) setBalanceLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (session) void loadBalance(session.token);
+  }, [session?.token]);
 
   useEffect(() => {
     if (!session) return;
@@ -199,14 +243,15 @@ export function App() {
       const token = result.data?.token;
       if (!token) throw new Error("Sign in succeeded, but no session token was returned.");
       activeToken.current = token;
-      setSession({ username: username.trim(), token });
+      const nextSession = { username: username.trim(), token };
+      storeSession(nextSession);
+      setSession(nextSession);
       setBalance(null);
       setPassword("");
       if (returnToMarket.current) navigateToMarket(returnToMarket.current);
       else navigate("markets");
       returnToMarket.current = null;
       setMessage("");
-      void loadBalance(token);
     } catch (cause) {
       setError(
         cause instanceof TypeError
@@ -222,6 +267,7 @@ export function App() {
 
   function signOut() {
     activeToken.current = null;
+    storeSession(null);
     setSession(null);
     setBalance(null);
     setBalanceLoading(false);
