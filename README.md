@@ -1,163 +1,65 @@
 # Apex Exchange
 
-For a first single-server AWS deployment, follow the [EC2 deployment guide](deploy/EC2.md).
+Apex is a demonstration perpetual futures exchange. It combines a price-time-priority matching engine, USDT collateral and positions, live market data, an HTTP API, WebSocket updates, and a browser trading interface. Trading and balances are simulated; no real assets are held or settled.
 
-## Legacy Turborepo notes
+## Architecture
 
-This Turborepo starter is maintained by the Turborepo core team.
+| Component | Role |
+| --- | --- |
+| `apps/frontend` | React trading interface with markets, charts, order entry, balances, and account activity. |
+| `apps/backend` | Express API for authentication, markets, orders, and demo account actions. |
+| `apps/engine` | In-memory order books, matching, margin, fees, funding, liquidation, candles, and snapshot recovery. |
+| `apps/market_data` | Fetches spot quotes from Coinbase and Kraken to produce mark prices. |
+| `apps/database` | Persists engine events to PostgreSQL and publishes private account updates. |
+| `apps/ws` | Streams public market data and authenticated account updates to clients. |
+| `apps/market_maker` | Optional demo bot that quotes markets and generates sample trades. |
+| `packages/db` | Prisma schema, migrations, seeding, and repositories. |
+| `packages/commons` | Shared market definitions, fixed-point helpers, and event types. |
 
-## Using this example
+Redis carries commands and events between services. PostgreSQL stores account and trade records. The engine maintains the live trading state and restores it from a snapshot plus the Redis stream after a restart. Caddy serves the frontend and proxies `/api` and `/ws`.
 
-Run the following command:
+## Run locally with Docker
 
-```sh
-npx create-turbo@latest
-```
-
-## What's inside?
-
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `@next/eslint-plugin-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Install Docker Desktop or another Docker engine and a Compose command. On macOS with Colima, start it first:
 
 ```sh
-cd my-turborepo
-turbo build
+colima start
 ```
 
-Without global `turbo`, use your package manager:
+From the repository root, create a local environment file:
 
 ```sh
-cd my-turborepo
-npx turbo build
-bun exec turbo build
-bun exec turbo build
+cp .env.example .env
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Edit `.env` before starting. Set `POSTGRES_PASSWORD` and use the same password in `DATABASE_URL`. Set independent values for `JWT_SECRET` and `ADMIN_TOKEN`. For local access on port 3000, keep `SITE_ADDRESS=:80` and set `WEB_HTTP_PORT=3000`. The example values are for configuration guidance and should be replaced.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+Start the stack with the Compose command installed on your machine:
 
 ```sh
-turbo build --filter=docs
+docker compose up -d --build
+# If "docker compose" is unavailable:
+docker-compose up -d --build
 ```
 
-Without global `turbo`:
+Open [http://localhost:3000](http://localhost:3000). The initial startup builds the images, applies Prisma migrations, and seeds the supported markets. The `migrate` and `seed` containers should exit with status 0; the other services remain running. Market data requires outbound access to Coinbase and Kraken, and order entry requires a fresh mark price from both sources.
+
+Useful commands:
 
 ```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
+docker-compose ps -a
+docker-compose logs -f --tail=100 engine market_data backend ws database web
+docker-compose down
 ```
 
-### Develop
+Use `docker compose` in place of `docker-compose` if that is your installed command. `down` preserves the named PostgreSQL, Redis, engine snapshot, and Caddy volumes. `down -v` removes them and deletes local trading state.
 
-To develop all apps and packages, run the following command:
+## Development
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+The repository uses Bun workspaces. Install dependencies with `bun install`. You can run individual services from their directories with `bun src/index.ts`, but they require the corresponding PostgreSQL, Redis, environment variables, and seeded markets. The frontend can run separately with `cd apps/frontend && bun run dev`; its development API target is `http://localhost:8000/api/v1`.
 
-```sh
-cd my-turborepo
-turbo dev
-```
+The market maker is separate from the default Compose stack. Its settings are in `apps/market_maker/.env.example`; use it only for demo activity with dedicated accounts.
 
-Without global `turbo`, use your package manager:
+## Deployment
 
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+For the single-server AWS setup, see [EC2 deployment](deploy/EC2.md). Set `SITE_ADDRESS` to your domain and expose only Caddy on ports 80 and 443. Keep `.env` out of version control and retain the PostgreSQL, Redis, and engine snapshot volumes together when backing up or moving the deployment.

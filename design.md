@@ -58,8 +58,6 @@ The screenshot assigns each coin a distinct accent. BTC uses amber `#f6a126`; ET
 
 The current ETH trade screenshot is the sole source of trade-page geometry and content. Do not copy the markets screenshot's navigation layout, ticker, five cards, filters, table, or copy into the trade page. Preserve the position and size of every panel, chart, field, tab, label, icon, and empty state. Change only surface colors, border colors, chart colors, and state accents. The landing and access pages retain their existing section and form layouts.
 
-## Output
+## Implementation
 
-[Trade-view reference image](design/trade-markets-reference.png) is the concept generated from the current trade screenshot and this markets reference. The palette is now implemented in the trade, landing, and sign-in/sign-up pages through `apps/frontend/src/apex-reference-theme.css`. The live and illustrative trade charts use the selected market's asset color; buy and sell retain semantic green and red.
-
-Browser captures of the implementation: [trade](design/implemented-trade.png), [landing](design/implemented-landing.png), [sign in](design/implemented-signin.png), and [sign up](design/implemented-signup.png).
+The palette is implemented in the trade, landing, and account access pages through `apps/frontend/src/apex-reference-theme.css`. Live and illustrative trade charts use the selected market's asset color; buy and sell retain semantic green and red.

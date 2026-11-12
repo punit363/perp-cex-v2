@@ -1,6 +1,5 @@
 .git
 .turbo
-.taste-skill
 **/node_modules
 **/dist
 packages/db/generated
