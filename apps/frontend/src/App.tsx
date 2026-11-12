@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { MarketDashboard, wsUrl } from "./MarketDashboard";
+import { MarketDashboard, apiBase, wsUrl } from "./MarketDashboard";
 import { BalanceDashboard } from "./BalanceDashboard";
 import { MarketTradePage } from "./MarketTradePage";
 import { LandingPage } from "./LandingPage";
 import { AccessPage, type AccessMode } from "./AccessPage";
+import { AppNav } from "./AppNav";
 import "./styles.css";
 
 type AuthMode = AccessMode;
@@ -64,21 +65,7 @@ function marketIdFromPath(pathname: string) {
   catch { return ""; }
 }
 
-const API_BASE =
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1")
-    ? "http://localhost:8000/api/v1"
-    : "/api/v1";
-
-function BrandMark({ compact = false }: { compact?: boolean }) {
-  return (
-    <span className={compact ? "brand-mark brand-mark--compact" : "brand-mark"} aria-hidden="true">
-      <svg viewBox="0 0 32 32" fill="none">
-        <path d="m6 23 7-7 5 4 8-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M19 11h7v7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </span>
-  );
-}
+const API_BASE = apiBase;
 
 async function request(path: string, options: RequestInit): Promise<ApiEnvelope> {
   const response = await fetch(API_BASE + path, options);
@@ -104,6 +91,7 @@ export function App() {
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceError, setBalanceError] = useState("");
   const [accountEventRevision, setAccountEventRevision] = useState(0);
+  const [marketLabel, setMarketLabel] = useState<string | null>(null);
   const usernameInput = useRef<HTMLInputElement>(null);
   const activeToken = useRef<string | null>(session?.token ?? null);
   const returnToMarket = useRef<string | null>(null);
@@ -128,6 +116,7 @@ export function App() {
     const path = `/market/${encodeURIComponent(id)}`;
     if (location.pathname !== path) window.history.pushState({}, "", path);
     setMarketId(id);
+    setMarketLabel(null);
     setSection("trade");
   }
 
@@ -203,11 +192,6 @@ export function App() {
     if (session) void loadBalance(session.token);
   }
 
-  function showDeposit() {
-    showBalances();
-    requestAnimationFrame(() => document.getElementById("wallet-add-amount")?.focus());
-  }
-
   function showSignIn() {
     returnToMarket.current = section === "trade" ? marketId : null;
     navigate("access");
@@ -277,27 +261,9 @@ export function App() {
 
   return (
     <div className="site-shell">
-      {section === "balances" && <header className="topbar">
-        <div className="topbar__left">
-          <button className="brand brand--header" type="button" onClick={() => navigate("home")} aria-label="Apex Exchange home">
-            <BrandMark compact /><span>APEX <span className="brand__muted">EXCHANGE</span></span>
-          </button>
-          <nav className="nav" aria-label="Main navigation">
-            <button type="button" className="nav__item" onClick={() => navigate("markets")}>Markets</button>
-            <button type="button" className={"nav__item" + (section === "balances" ? " is-active" : "")} onClick={showBalances}>Balances</button>
-          </nav>
-        </div>
-        <div className="topbar__right">
-          {session && <div className="topbar__wallet-actions"><button type="button" onClick={showDeposit}>Deposit</button><button type="button" disabled title="Withdrawals are not available yet">Withdraw</button></div>}
-          <span className="environment-badge"><span className="environment-badge__dot" /> Simulated trading</span>
-          <span className="topbar__divider" />
-          {session
-            ? <><div className="topbar__identity"><strong>{session.username}</strong><span>Trading account</span></div><button type="button" className="topbar__action topbar__action--outline" onClick={signOut}>Logout</button></>
-            : <button type="button" className="topbar__action" onClick={showSignIn}>Sign In</button>}
-        </div>
-      </header>}
+      {section !== "home" && <AppNav page={section} accessMode={mode} marketLabel={marketLabel} signedIn={Boolean(session)} onHome={() => navigate("home")} onMarkets={() => navigate("markets")} onWallet={showBalances} onSignIn={showSignIn} />}
 
-      {section === "markets" ? <MarketDashboard balance={balance} balanceLoading={balanceLoading} signedIn={Boolean(session)} onBalances={showBalances} onSignIn={showSignIn} onSelectMarket={navigateToMarket} onHome={() => navigate("home")} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} balance={balance} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onMarkets={() => navigate("markets")} onBalances={showBalances} onHome={() => navigate("home")} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} /> : section === "access" ? <AccessPage mode={mode} username={username} password={password} showPassword={showPassword} busy={busy} message={message} error={error} sessionUsername={session?.username ?? null} usernameInput={usernameInput} onHome={() => navigate("home")} onMarkets={() => navigate("markets")} onBalances={showBalances} onModeChange={(nextMode) => { setMode(nextMode); setError(""); setMessage(""); }} onUsernameChange={setUsername} onPasswordChange={setPassword} onTogglePassword={() => setShowPassword((current) => !current)} onSubmit={submitAuth} /> : <LandingPage signedIn={Boolean(session)} username={session?.username ?? null} onMarkets={() => navigate("markets")} onMarket={navigateToMarket} onSignIn={showSignIn} onSignUp={showSignUp} onBalances={showBalances} />}
+      {section === "markets" ? <MarketDashboard onSelectMarket={navigateToMarket} /> : section === "trade" ? <MarketTradePage marketId={marketId} token={session?.token ?? null} balance={balance} accountEventRevision={accountEventRevision} onSignIn={showSignIn} onMarkets={() => navigate("markets")} onMarketLabelChange={setMarketLabel} onBalanceRefresh={() => { if (session) void loadBalance(session.token); }} /> : section === "balances" ? <BalanceDashboard key={session?.token ?? "guest"} balance={balance} loading={balanceLoading} error={balanceError} username={session?.username ?? null} token={session?.token ?? null} onRefresh={() => session ? loadBalance(session.token) : Promise.resolve()} onSignIn={showSignIn} onSignOut={signOut} /> : section === "access" ? <AccessPage mode={mode} username={username} password={password} showPassword={showPassword} busy={busy} message={message} error={error} sessionUsername={session?.username ?? null} usernameInput={usernameInput} onBalances={showBalances} onModeChange={(nextMode) => { setMode(nextMode); setError(""); setMessage(""); }} onUsernameChange={setUsername} onPasswordChange={setPassword} onTogglePassword={() => setShowPassword((current) => !current)} onSubmit={submitAuth} /> : <LandingPage signedIn={Boolean(session)} username={session?.username ?? null} onMarkets={() => navigate("markets")} onMarket={navigateToMarket} onSignIn={showSignIn} onSignUp={showSignUp} onBalances={showBalances} />}
     </div>
   );
 }

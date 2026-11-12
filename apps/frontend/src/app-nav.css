@@ -1,0 +1,49 @@
+.app-nav { --app-nav-height: 70px; height: var(--app-nav-height); display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 clamp(20px, 3.7vw, 76px); border-bottom: 1px solid #1b1d22; background: #090a0c; color: #f4f4f5; font-family: Inter, ui-sans-serif, sans-serif; }
+.app-nav button { cursor: pointer; }
+.app-nav__left, .app-nav__right, .app-nav__breadcrumbs { display: flex; align-items: center; min-width: 0; }
+.app-nav__left { gap: 31px; }
+.app-nav__right { gap: 31px; }
+.app-nav__brand { display: flex; flex: none; flex-direction: column; align-items: center; justify-content: center; min-width: 76px; padding: 0; border: 0; background: none; color: #f6f6f7; line-height: 1; }
+.app-nav__brand strong { font-size: 18px; font-weight: 800; letter-spacing: -.07em; }
+.app-nav__brand span { margin-top: 6px; color: #a2a6b3; font-size: 9px; font-weight: 700; letter-spacing: .2em; }
+.app-nav__divider { width: 1px; height: 31px; flex: none; background: #282b33; }
+.app-nav__breadcrumbs { gap: 13px; overflow: hidden; color: #8f94a4; font-size: 14px; white-space: nowrap; }
+.app-nav__breadcrumbs button { padding: 6px 0; border: 0; background: none; color: #8f94a4; white-space: nowrap; }
+.app-nav__breadcrumbs button:hover, .app-nav__breadcrumbs button:focus-visible { color: #f4f4f5; }
+.app-nav__breadcrumbs button span { margin-right: 6px; font-size: 15px; }
+.app-nav__slash { color: #5d6270; }
+.app-nav__current { overflow: hidden; color: #e1e3e7; font-weight: 550; text-overflow: ellipsis; }
+.app-nav__status { display: inline-flex; align-items: center; gap: 8px; color: #8f94a4; font-size: 12px; white-space: nowrap; }
+.app-nav__status i { width: 8px; height: 8px; border-radius: 50%; background: #606775; }
+.app-nav__status.is-live i { background: #59bc83; box-shadow: 0 0 0 4px #59bc831c; }
+.app-nav__wallet { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-width: 133px; height: 39px; padding: 0 14px; border: 1px solid #292c34; border-radius: 8px; background: #17191e; color: #d8d9dd; font-size: 13px; font-weight: 550; white-space: nowrap; }
+.app-nav__wallet:hover { border-color: #666a75; background: #1d2026; }
+.app-nav__wallet span { color: #8f94a4; font-size: 17px; font-weight: 400; }
+.site-shell:has(.app-nav) .quant-page, .site-shell:has(.app-nav) .quant-shell, .site-shell:has(.app-nav) .access-page { min-height: calc(100dvh - 70px); }
+.site-shell:has(.app-nav) .trade-page { height: calc(100dvh - 70px); }
+.site-shell:has(.app-nav) .wallet-page { min-height: calc(100dvh - 70px); }
+.site-shell:has(.app-nav) .access-page__content { min-height: calc(100dvh - 70px); }
+.wallet-page__signout { padding: 9px 12px; border: 1px solid #2b3540; border-radius: 10px; background: #14171d; color: #a6b4c2; font-size: 12px; white-space: nowrap; }
+.wallet-page__signout:hover { border-color: #667281; color: #f4f6f5; }
+@media (max-width: 1260px) { .site-shell:has(.app-nav) .trade-page { height: auto; min-height: calc(100dvh - 70px); } .site-shell:has(.app-nav) .trade-page__inner { min-height: calc(100dvh - 70px); } }
+@media (max-width: 640px) {
+  .app-nav { --app-nav-height: 58px; height: var(--app-nav-height); gap: 10px; padding: 0 16px; }
+  .app-nav__left { gap: 14px; flex: 1; }
+  .app-nav__right { gap: 12px; }
+  .app-nav__brand { min-width: 54px; }
+  .app-nav__brand strong { font-size: 15px; }
+  .app-nav__brand span { margin-top: 4px; font-size: 7px; letter-spacing: .16em; }
+  .app-nav__divider { height: 25px; }
+  .app-nav__breadcrumbs { gap: 7px; font-size: 12px; }
+  .app-nav__breadcrumbs button { font-size: 0; }
+  .app-nav__breadcrumbs button span { margin: 0; font-size: 18px; }
+  .app-nav__breadcrumbs button:nth-of-type(2) { display: none; }
+  .app-nav__breadcrumbs button:nth-of-type(2) + .app-nav__slash { display: none; }
+  .app-nav__status { font-size: 0; }
+  .app-nav__status i { width: 7px; height: 7px; }
+  .app-nav__wallet { min-width: 0; height: 34px; gap: 6px; padding: 0 9px; font-size: 11px; }
+  .app-nav__wallet span { font-size: 14px; }
+  .site-shell:has(.app-nav) .quant-page, .site-shell:has(.app-nav) .quant-shell, .site-shell:has(.app-nav) .access-page, .site-shell:has(.app-nav) .wallet-page { min-height: calc(100dvh - 58px); }
+  .site-shell:has(.app-nav) .trade-page, .site-shell:has(.app-nav) .trade-page__inner { min-height: calc(100dvh - 58px); }
+  .site-shell:has(.app-nav) .access-page__content { min-height: calc(100dvh - 58px); }
+}

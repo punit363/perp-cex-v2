@@ -98,13 +98,15 @@
 .trade-book__header { height: 38px; border-color: #29252a; }
 .trade-book__tabs button.is-active { border-bottom-color: #ee8743; }
 .trade-book__columns { padding: 10px 11px 7px; color: #817a83; }
-.trade-book__side button { height: 20px; flex-basis: 20px; padding: 0 11px; color: #bbb5bb; font-size: 9px; }
+.trade-book__side button { height: 26px; flex-basis: 26px; padding: 0 11px; color: #bbb5bb; font-size: 12px; }
 .trade-book__side--ask .trade-book__price { color: #ef777e; }
 .trade-book__side--bid .trade-book__price { color: #50c883; }
 .trade-book__bar { background: #e4516222; }
 .trade-book__side--bid .trade-book__bar { background: #37ba7522; }
 .trade-book__mid { padding: 11px; border-color: #29252a; background: #1f1a20; }
-.trade-book__mid strong { color: #f0e9ec; }
+.trade-book__mid strong { color: #f0e9ec; font-size: 21px; }
+.trade-book__mid span { font-size: 12px; }
+.trade-book__trade { padding: 12px 11px; font-size: 13px; }
 .trade-order { overflow-y: auto; scrollbar-width: thin; }
 .trade-order__header { min-height: 52px; border-color: #29252a; }
 .trade-order__header span { color: #a198a3; }
@@ -134,6 +136,7 @@
 .trade-chart__pair { display: inline-flex; align-items: center; gap: 12px; min-height: 48px; max-width: 100%; padding: 4px 11px 4px 4px; border: 0; border-radius: 26px; background: #111012; color: #f5f2f4; font: 650 19px/1 Inter,sans-serif; letter-spacing: -.035em; white-space: nowrap; cursor: pointer; }
 .trade-chart__pair:hover { background: #211d20; }
 .trade-chart__pair > svg { width: 17px; height: 17px; margin-left: 8px; color: #a29aa1; }
+.trade-chart__pair-leverage { flex: none; padding: 5px 8px; border-radius: 7px; background: #262328; color: #c8c3ca; font: 650 12px/1 Inter,sans-serif; letter-spacing: 0; }
 .trade-chart__pair-icon { position: relative; width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #ed962e; color: white; font-size: 24px; }
 .trade-chart__pair-icon img { width: 40px; height: 40px; object-fit: contain; }
 .trade-chart__pair-icon i { position: absolute; right: -2px; bottom: -1px; width: 17px; height: 17px; display: grid; place-items: center; border: 2px solid #151416; border-radius: 50%; background: #58a994; color: white; font: 700 10px/1 Inter,sans-serif; font-style: normal; }
@@ -153,11 +156,15 @@
 .trade-chart__change > span { color: #777279; font: 500 11px/1 Inter,sans-serif; white-space: nowrap; }
 .trade-chart__change > span:first-child { padding: 5px 7px; border-radius: 5px; background: #14271c; color: #36be68; font-weight: 650; }
 .trade-chart__change > span:first-child.is-negative { background: #301c20; color: #ed777e; }
-.trade-chart__stats { flex: 1 1 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 7px; min-width: 0; padding: 0; }
+.trade-chart__stats { flex: 1 1 0; display: grid; grid-template-columns: minmax(0,.9fr) minmax(170px,1.65fr) repeat(3,minmax(0,1fr)); gap: 7px; min-width: 0; padding: 0; }
 .trade-chart__stats > div { min-width: 0; min-height: 65px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: #111012; }
 .trade-chart__stats span { overflow: hidden; max-width: 100%; color: #827d84; font: 500 10px/1 Inter,sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .trade-chart__stats span i { margin-left: 2px; color: #69656b; font-style: normal; cursor: help; }
 .trade-chart__stats strong { color: #f4f0f3; font: 600 14px/1 Inter,sans-serif; letter-spacing: -.045em; }
+.trade-chart__funding strong { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.trade-chart__funding strong b { color: #ed884c; font-weight: 650; }
+.trade-chart__funding.is-pending strong b { color: #827d84; }
+.trade-chart__funding strong em { color: #827d84; font-style: normal; font-weight: 400; }
 .trade-chart__intro > .trade-live-pill { display: none; }
 @media (max-width: 1530px) and (min-width: 1261px) {
   .trade-chart__intro { min-height: 207px; }
@@ -234,15 +241,16 @@
 .trade-chart__pair-icon { font-size: 20px; }
 .trade-chart__pair-icon i { width: 14px; height: 14px; font-size: 8px; }
 .trade-chart__pair > svg { width: 14px; height: 14px; margin-left: 4px; }
+.trade-chart__pair-leverage { padding: 4px 6px; font-size: 10px; }
 .trade-chart__modes button { width: 33px; min-width: 33px; height: 29px; min-height: 29px; }
 .trade-chart__modes button svg { width: 18px; height: 18px; }
 .trade-chart__periods button { height: 29px; padding: 0 8px; font-size: 10px; }
-.trade-chart__headline { display: grid; grid-template-columns: minmax(130px,.75fr) minmax(0,3.75fr); align-items: end; gap: 12px; margin-top: 20px; }
-.trade-chart__quote strong { font-size: clamp(25px,2.1vw,34px); }
+.trade-chart__headline { display: grid; grid-template-columns: minmax(155px,.8fr) minmax(0,3.6fr); align-items: end; gap: 12px; margin-top: 20px; }
+.trade-chart__quote strong { font-size: clamp(25px,1.8vw,30px); }
 .trade-chart__quote .trade-chart__change { gap: 6px; margin-top: 9px; }
 .trade-chart__change > span { font-size: 9px; }
 .trade-chart__change > span:first-child { padding: 4px 5px; }
-.trade-chart__stats { width: auto; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.trade-chart__stats { width: auto; grid-template-columns: minmax(0,.9fr) minmax(170px,1.65fr) repeat(3,minmax(0,1fr)); gap: 6px; }
 .trade-chart__stats > div { min-height: 62px; gap: 9px; padding: 8px; }
 .trade-chart__stats span { font-size: 9px; }
 .trade-chart__stats strong { font-size: 13px; }
@@ -269,6 +277,6 @@
   .trade-chart__top { align-items: flex-start; flex-direction: column; gap: 8px; }
   .trade-chart__headline { display: flex; flex-direction: row; align-items: end; gap: 8px; max-width: 100%; overflow-x: auto; scrollbar-width: thin; }
   .trade-chart__quote { flex: 0 0 120px; }
-  .trade-chart__stats { flex: 0 0 420px; }
+  .trade-chart__stats { flex: 0 0 600px; grid-template-columns: minmax(0,.9fr) minmax(170px,1.65fr) repeat(3,minmax(0,1fr)); }
   .trade-chart__intro { min-height: 170px; }
 }

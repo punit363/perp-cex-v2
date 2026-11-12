@@ -13,8 +13,6 @@ type AccessPageProps = {
   error: string;
   sessionUsername: string | null;
   usernameInput: RefObject<HTMLInputElement | null>;
-  onHome: () => void;
-  onMarkets: () => void;
   onBalances: () => void;
   onModeChange: (mode: AccessMode) => void;
   onUsernameChange: (value: string) => void;
@@ -35,7 +33,7 @@ export function AccessPage(props: AccessPageProps) {
   useLayoutEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const context = gsap.context(() => {
-      gsap.fromTo(".access-page__brand, .access-page__intro, .access-page__panel", { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.46, stagger: 0.08, ease: "power3.out", clearProps: "all" });
+      gsap.fromTo(".access-page__intro, .access-page__panel", { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.46, stagger: 0.08, ease: "power3.out", clearProps: "all" });
       gsap.fromTo(".access-page__signal i", { scaleY: 0.25, transformOrigin: "bottom" }, { scaleY: 1, duration: 0.55, stagger: 0.05, ease: "power2.out", delay: 0.2 });
     });
     return () => context.revert();
@@ -44,10 +42,6 @@ export function AccessPage(props: AccessPageProps) {
   const signedIn = Boolean(props.sessionUsername);
   return <main className="access-page">
     <div className="access-page__field" aria-hidden="true"><i /><i /><i /></div>
-    <header className="access-page__header">
-      <button type="button" className="access-page__brand" onClick={props.onHome}><ApexMark /> <span>APEX <small>EXCHANGE</small></span></button>
-      <button type="button" className="access-page__markets" onClick={props.onMarkets}>View markets <span aria-hidden="true">↗</span></button>
-    </header>
     <section className="access-page__content" aria-labelledby="access-page-title">
       <div className="access-page__intro">
         <span className="access-page__eyebrow">ACCOUNT / ACCESS</span>

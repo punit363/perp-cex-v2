@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { StoredCandle } from "./marketData";
+import { SEED_LABEL, seedMarketSlugs, seedPrice, seedStats } from "./marketSeed";
 import aaveIcon from "../public/icons/aave_coin.png";
 import adaIcon from "../public/icons/ada_coin.png";
 import avaxIcon from "../public/icons/avax_coin.png";
@@ -61,21 +62,12 @@ export const icons: Record<string, string> = {
   USDT: usdtIcon,
   XRP: xrpIcon,
 };
-export const previewPairs = [
-  "BTC-USDT",
-  "ETH-USDT",
-  "DOGE-USDT",
-  "LTC-USDT",
-  "UNI-USDT",
-  "ADA-USDT",
-  "AVAX-USDT",
-  "LINK-USDT",
-  "XRP-USDT",
-  "BCH-USDT",
-  "FIL-USDT",
-  "OP-USDT",
-  "USDC-USDT",
-];
+export const previewPairs = seedMarketSlugs;
+const marketPriority = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "LTC", "BCH", "UNI", "OP", "FIL", "USDC"];
+const marketRank = (base: string) => {
+  const rank = marketPriority.indexOf(base);
+  return rank === -1 ? marketPriority.length : rank;
+};
 const names: Record<string, string> = {
   AAVE: "Aave",
   ADA: "Cardano",
@@ -99,7 +91,8 @@ const names: Record<string, string> = {
   XRP: "XRP",
 };
 const local =
-  location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  process.env.NODE_ENV !== "production" &&
+  (location.hostname === "localhost" || location.hostname === "127.0.0.1");
 export const apiBase = local ? "http://localhost:8000/api/v1" : "/api/v1";
 export const wsUrl = local
   ? `ws://${location.hostname}:7001`
@@ -169,7 +162,7 @@ function priceOf(market: ViewMarket, quote?: Quote) {
   const live = quote?.mark_price ?? quote?.last_traded_price;
   const stored = market.mark_price ?? market.last_traded_price;
   const value = live ? Number(live) : stored ? asNumber(stored) : null;
-  return value && Number.isFinite(value) && value > 0 ? value : null;
+  return value && Number.isFinite(value) && value > 0 ? value : seedPrice(market.slug);
 }
 function money(value: number | null) {
   if (value === null) return "—";
@@ -226,7 +219,7 @@ function Sparkline({
   return (
     <div
       className={`quant-spark quant-spark--${tone} ${large ? "quant-spark--large" : ""}`}
-      aria-label="Recorded trade price history"
+      aria-label="Market price history"
     >
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <polygon
@@ -301,49 +294,30 @@ function Feature({
       >
         ⋮
       </button>
-      <Sparkline values={stats.points} tone={tone} large />
+      <Sparkline values={stats.points} tone={stats.change !== null && stats.change < 0 ? "red" : "green"} large />
     </article>
   );
 }
 
 export function MarketDashboard({
-  signedIn,
-  onBalances,
-  onSignIn,
   onSelectMarket,
-  onHome,
 }: {
-  balance: { available: string; reserved: string } | null;
-  balanceLoading: boolean;
-  signedIn: boolean;
-  onBalances: () => void;
-  onSignIn: () => void;
   onSelectMarket: (marketId: string) => void;
-  onHome: () => void;
 }) {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [feed, setFeed] = useState<
-    "idle" | "connecting" | "connected" | "offline"
-  >("idle");
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
-  const [now, setNow] = useState(Date.now);
   const [candles, setCandles] = useState<Record<string, StoredCandle[]>>({});
   const tickerTrack = useRef<HTMLDivElement>(null);
   const [tickerEnds, setTickerEnds] = useState({ start: true, end: false });
   const [quoteFilter, setQuoteFilter] = useState("All quotes");
   const [filter, setFilter] = useState<Filter>("All");
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(1);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const marketIds = markets.map((market) => market.market_id).join("|");
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -398,20 +372,15 @@ export function MarketDashboard({
   }, [marketIds]);
 
   useEffect(() => {
-    if (!markets.length) {
-      setFeed("idle");
-      return;
-    }
+    if (!markets.length) return;
     let stopped = false,
       retry: ReturnType<typeof setTimeout> | undefined,
       socket: WebSocket | undefined;
     const ids = new Set(markets.map((market) => market.market_id));
     const connect = () => {
-      setFeed("connecting");
       socket = new WebSocket(wsUrl);
       socket.onopen = () => {
         if (stopped) return;
-        setFeed("connected");
         ids.forEach((market_id) =>
           socket?.send(
             JSON.stringify({ action: "SUBSCRIBE", type: "TICKER", market_id }),
@@ -470,10 +439,9 @@ export function MarketDashboard({
           /* Ignore non-ticker messages. */
         }
       };
-      socket.onerror = () => setFeed("offline");
+      socket.onerror = () => socket?.close();
       socket.onclose = () => {
         if (!stopped) {
-          setFeed("offline");
           retry = setTimeout(connect, 3500);
         }
       };
@@ -497,18 +465,18 @@ export function MarketDashboard({
           last_traded_price: null,
         }))
       : markets
-  ).map((market) => ({ ...market, ...partsOf(market.slug), preview }));
+  ).map((market) => ({ ...market, ...partsOf(market.slug), preview }))
+    .sort((a, b) => marketRank(a.base) - marketRank(b.base) || a.slug.localeCompare(b.slug));
   const quoteOptions = [
     "All quotes",
     ...new Set(all.map((market) => market.quote)),
   ];
-  const stats: Record<string, Stats> = Object.fromEntries(
-    all.map((market) => [
-      market.market_id,
-      statsFor(candles[market.market_id] ?? [], days),
-    ]),
-  );
-  const featured: ViewMarket[] = ["BTC", "ETH", "DOGE", "ADA", "AVAX"]
+  const stats: Record<string, Stats> = Object.fromEntries(all.map((market) => {
+    const recorded = statsFor(candles[market.market_id] ?? [], days);
+    return [market.market_id, recorded.points.length ? recorded : seedStats(market.slug, days)];
+  }));
+  const showingReferences = all.some((market) => !statsFor(candles[market.market_id] ?? [], days).points.length);
+  const featured: ViewMarket[] = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
     .map(
       (base) =>
         all.find((market) => market.base === base && market.quote === "USDT") ??
@@ -572,49 +540,9 @@ export function MarketDashboard({
         : [...current, id],
     );
 
-  const hasFreshMark = Object.values(quotes).some(
-    (quote) => quote.mark_expires_at_ms !== undefined && quote.mark_expires_at_ms >= now,
-  );
-  const liveMarks = feed === "connected" && hasFreshMark;
-  const feedLabel = liveMarks ? "Live" : feed === "connected" ? "No live marks" : "Offline";
-  const feedTitle = liveMarks
-    ? "WebSocket connected and fresh market marks received"
-    : feed === "connected"
-      ? "WebSocket connected; no fresh market marks received"
-      : "Market WebSocket unavailable";
-
   return (
     <main className="quant-page">
       <div className="quant-shell">
-        <header className="quant-header">
-          <div className="quant-header__left">
-            <button type="button" className="quant-wordmark" onClick={onHome}>
-              APEX<span>EXCHANGE</span>
-            </button>
-            <span className="quant-header__divider" />
-            <span className="quant-breadcrumb">
-              ⌂ <span>Overview</span>
-              <i>/</i>
-              <strong>Markets</strong>
-            </span>
-          </div>
-          <div className="quant-header__right">
-            <span
-              className={`quant-feed ${liveMarks ? "is-connected" : ""}`}
-              title={feedTitle}
-            >
-              <i /> {feedLabel}
-            </span>
-            <button
-              type="button"
-              className="quant-account"
-              onClick={signedIn ? onBalances : onSignIn}
-            >
-              {signedIn ? "Your wallet" : "Sign in"}
-              <span aria-hidden="true">↗</span>
-            </button>
-          </div>
-        </header>
         <div className="quant-ticker" aria-label="Market prices">
           <span className="quant-ticker__label">
             MARKETS <i />
@@ -658,7 +586,7 @@ export function MarketDashboard({
                   </span>
                 </h1>
                 <p>
-                  Live prices and recorded activity across perpetual markets.
+                  Market prices and recorded activity across perpetual markets.
                 </p>
               </div>
               <div className="quant-intro__controls">
@@ -709,21 +637,21 @@ export function MarketDashboard({
               </div>
             </div>
           </div>
-          {preview && !loading && (
+          {showingReferences && !loading && (
             <p className="quant-notice" role="status">
-              {loadError
-                ? "Market service unavailable. Preview pairs are shown without prices."
-                : "No markets listed yet. Preview pairs are shown without prices."}
+              {preview
+                ? `Market service ${loadError ? "unavailable" : "has no listed pairs"}. Showing reference USD spot prices and illustrative activity from ${SEED_LABEL}; trading requires a listed market.`
+                : `Markets without exchange trades show reference USD spot prices and illustrative activity from ${SEED_LABEL}. Live exchange data replaces the preview when available.`}
             </p>
           )}
           <div className="quant-feature-grid">
-            {featured.map((market, index) => (
+            {featured.map((market) => (
               <Feature
                 key={market.market_id}
                 market={market}
                 price={priceOf(market, quotes[market.market_id])}
                 stats={stats[market.market_id]!}
-                tone={["amber", "violet", "cyan", "green", "rose"][index]!}
+                tone={stats[market.market_id]?.change !== null && (stats[market.market_id]?.change ?? 0) < 0 ? "red" : "green"}
                 onOpen={() => onSelectMarket(market.market_id)}
               />
             ))}

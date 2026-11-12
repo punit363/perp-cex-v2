@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiBase, formatScaled, icons, partsOf, previewPairs, wsUrl, type Market } from "./MarketDashboard";
 import { MarketCandlestickChart } from "./MarketCandlestickChart";
 import { mergeCandles, mergeTrades, tickerFromTrades, type StoredCandle, type TradeRecord } from "./marketData";
+import { SEED_LABEL, seedCandles, seedDepth, seedPrice, seedTicker, seedTrades } from "./marketSeed";
 
 type Level = { price: string; quantity: string };
 type Depth = { asks: Level[]; bids: Level[] };
@@ -46,6 +47,7 @@ type Liquidation = {
   created_at: string;
 };
 type FundingPayment = { interval_end_ms: number; amount: string; available_debit: string; margin_debit: string; insurance_covered: string; uncovered_shortfall: string };
+type FundingState = { rate: string; ready: boolean; next_funding_ms: number };
 type AccountTab = "open" | "history" | "positions" | "liquidations" | "funding";
 type Envelope<T> = { status?: string; message?: string; data?: T };
 
@@ -67,11 +69,21 @@ function grouped(value: string) {
   return fraction ? `${base}.${fraction}` : base;
 }
 
+const bookNumberFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function bookNumber(value: string | number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? bookNumberFormatter.format(number) : "–";
+}
+
 function validPositive(value: string) {
   return decimal.test(value) && Number(value) > 0 && Number.isFinite(Number(value));
 }
 
-function BookSide({ levels, side, onChoosePrice }: { levels: Level[]; side: "ask" | "bid"; onChoosePrice: (price: string) => void }) {
+function BookSide({ levels, side, illustrative, onChoosePrice }: { levels: Level[]; side: "ask" | "bid"; illustrative: boolean; onChoosePrice: (price: string) => void }) {
   let total = 0;
   const rows = levels.slice(0, 12).map((level) => {
     total += Number(level.quantity);
@@ -80,34 +92,34 @@ function BookSide({ levels, side, onChoosePrice }: { levels: Level[]; side: "ask
   const visible = side === "ask" ? rows.reverse() : rows;
   const maximum = Math.max(...rows.map((level) => level.total), 1);
   return <div className={`trade-book__side trade-book__side--${side}`}>
-    {visible.length ? visible.map((level, index) => <button type="button" key={`${level.price}-${index}`} onClick={() => onChoosePrice(level.price)} title="Use this price in the limit order form"><span className="trade-book__bar" style={{ width: `${Math.min(100, level.total / maximum * 100)}%` }} /><span className="trade-book__price">{grouped(level.price)}</span><span>{grouped(level.quantity)}</span><span>{grouped(String(level.total))}</span></button>) : <div className="trade-book__empty">No {side === "ask" ? "asks" : "bids"} available</div>}
+    {visible.length ? visible.map((level, index) => <button type="button" key={`${level.price}-${index}`} disabled={illustrative} onClick={() => onChoosePrice(level.price)} title={illustrative ? "Illustrative depth, unavailable for orders" : "Use this price in the limit order form"}><span className="trade-book__bar" style={{ width: `${Math.min(100, level.total / maximum * 100)}%` }} /><span className="trade-book__price">{bookNumber(level.price)}</span><span>{bookNumber(level.quantity)}</span><span>{bookNumber(level.total)}</span></button>) : <div className="trade-book__empty">No {side === "ask" ? "asks" : "bids"} available</div>}
   </div>;
 }
 
-function OrderBook({ depth, loading, error, current, trades, connected, onChoosePrice, onRefresh }: { depth: Depth | null; loading: boolean; error: string; current: string | null; trades: LiveTrade[]; connected: boolean; onChoosePrice: (price: string) => void; onRefresh: () => void }) {
+function OrderBook({ depth, loading, error, current, trades, connected, illustrativeDepth, illustrativeTrades, onChoosePrice, onRefresh }: { depth: Depth | null; loading: boolean; error: string; current: string | null; trades: LiveTrade[]; connected: boolean; illustrativeDepth: boolean; illustrativeTrades: boolean; onChoosePrice: (price: string) => void; onRefresh: () => void }) {
   const [view, setView] = useState<"book" | "trades">("book");
   const spread = depth?.asks[0] && depth?.bids[0] ? Number(depth.asks[0].price) - Number(depth.bids[0].price) : null;
   return <section className="trade-book" aria-label="Live order book">
-    <div className="trade-book__title"><div><span className="trade-panel__eyebrow">MARKET DEPTH</span><h2>Order book</h2></div><span className={`trade-book__live ${connected ? "" : "is-offline"}`}><i /> {connected ? "LIVE" : "OFFLINE"}</span></div>
+    <div className="trade-book__title"><div><span className="trade-panel__eyebrow">MARKET DEPTH</span><h2>Order book</h2></div><span className={`trade-book__live ${connected && !(view === "book" ? illustrativeDepth : illustrativeTrades) ? "" : "is-offline"}`}><i /> {view === "book" ? illustrativeDepth ? "REFERENCE" : connected ? "LIVE" : "OFFLINE" : illustrativeTrades ? "REFERENCE" : connected ? "LIVE" : "OFFLINE"}</span></div>
     <div className="trade-book__header"><div className="trade-book__tabs" role="tablist" aria-label="Market activity"><button type="button" role="tab" aria-selected={view === "book"} className={view === "book" ? "is-active" : ""} onClick={() => setView("book")}>Depth</button><button type="button" role="tab" aria-selected={view === "trades"} className={view === "trades" ? "is-active" : ""} onClick={() => setView("trades")}>Trades</button></div>{view === "book" && <button type="button" className="trade-icon-button" onClick={onRefresh} aria-label="Refresh order book" title="Refresh order book">↻</button>}</div>
     {view === "book" ? <>
       <div className="trade-book__columns"><span>PRICE</span><span>SIZE</span><span>TOTAL</span></div>
       {loading && !depth ? <div className="trade-book__loading">Loading order book…</div> : <>
-        <BookSide levels={depth?.asks ?? []} side="ask" onChoosePrice={onChoosePrice} />
-        <div className="trade-book__mid"><strong>{current ? grouped(current) : "–"}</strong><span>{spread !== null && Number.isFinite(spread) ? `SPREAD ${grouped(spread.toFixed(4))}` : "LAST PRICE"}</span></div>
-        <BookSide levels={depth?.bids ?? []} side="bid" onChoosePrice={onChoosePrice} />
+        <BookSide levels={depth?.asks ?? []} side="ask" illustrative={illustrativeDepth} onChoosePrice={onChoosePrice} />
+        <div className="trade-book__mid"><strong>{current ? bookNumber(current) : "–"}</strong><span>{spread !== null && Number.isFinite(spread) ? `SPREAD ${bookNumber(spread)}` : "LAST PRICE"}</span></div>
+        <BookSide levels={depth?.bids ?? []} side="bid" illustrative={illustrativeDepth} onChoosePrice={onChoosePrice} />
       </>}
+      {illustrativeDepth && <p className="trade-book__notice">Illustrative USD spot depth · {SEED_LABEL} · not available for orders</p>}
       {error && <p className="trade-book__notice" role="status">{error}</p>}
-    </> : <div className="trade-book__trades" role="tabpanel"><div className="trade-book__trade-head"><span>PRICE</span><span>SIZE</span><span>TIME</span></div>{trades.length ? trades.slice(0, 12).map((trade) => <div className="trade-book__trade" key={trade.trade_id}><span className={trade.taker_side === "BUY" ? "is-buy" : "is-sell"}>{grouped(trade.price)}</span><span>{grouped(trade.quantity)}</span><time>{new Date(trade.time).toLocaleTimeString()}</time></div>) : <div className="trade-book__empty-trades">Trades will appear here as they happen.</div>}</div>}
+    </> : <div className="trade-book__trades" role="tabpanel"><div className="trade-book__trade-head"><span>PRICE</span><span>SIZE</span><span>TIME</span></div>{trades.length ? trades.slice(0, 12).map((trade) => <div className="trade-book__trade" key={trade.trade_id}><span className={trade.taker_side === "BUY" ? "is-buy" : "is-sell"}>{bookNumber(trade.price)}</span><span>{bookNumber(trade.quantity)}</span><time>{new Date(trade.time).toLocaleTimeString()}</time></div>) : <div className="trade-book__empty-trades">Trades will appear here as they happen.</div>}{illustrativeTrades && <p className="trade-book__notice">Illustrative reference prints · {SEED_LABEL} · exchange trades appear when matched</p>}</div>}
   </section>;
 }
 
-function OrderForm({ marketId, listed, halted, token, currentPrice, selectedPrice, onSignIn, onPlaced }: { marketId: string; listed: boolean; halted: boolean; token: string | null; currentPrice: string | null; selectedPrice: string | null; onSignIn: () => void; onPlaced: () => void }) {
+function OrderForm({ marketId, listed, halted, token, currentPrice, selectedPrice, leverage, onLeverageChange, onSignIn, onPlaced }: { marketId: string; listed: boolean; halted: boolean; token: string | null; currentPrice: string | null; selectedPrice: string | null; leverage: string; onLeverageChange: (value: string) => void; onSignIn: () => void; onPlaced: () => void }) {
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [type, setType] = useState<"LIMIT" | "MARKET">("LIMIT");
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [leverage, setLeverage] = useState("1");
   const [budget, setBudget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -159,7 +171,7 @@ function OrderForm({ marketId, listed, halted, token, currentPrice, selectedPric
       {type === "LIMIT" && <label>Limit price<input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" required /><span>PRICE</span></label>}
       {type === "MARKET" && side === "BUY" && <label>Maximum spend<input value={budget} onChange={(event) => setBudget(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" required /><span>BUDGET</span></label>}
       <label>Quantity<input value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" required /><span>UNITS</span></label>
-      <label>Leverage<input value={leverage} onChange={(event) => setLeverage(event.target.value)} inputMode="decimal" placeholder="1" autoComplete="off" required /><span>×</span></label>
+      <label>Leverage<input value={leverage} onChange={(event) => onLeverageChange(event.target.value)} inputMode="decimal" placeholder="1" autoComplete="off" required /><span>×</span></label>
       <div className="trade-order__estimate"><div><span>Order value</span><strong>{notional !== null && Number.isFinite(notional) ? notional.toLocaleString(undefined, { maximumFractionDigits: 4 }) : "–"}</strong></div><div><span>Est. initial margin</span><strong>{estimate !== null && Number.isFinite(estimate) ? `≈ ${estimate.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : "–"}</strong></div></div>
       {type === "MARKET" && <p className="trade-order__hint">{side === "BUY" ? "The engine spends up to your maximum amount across available asks." : "The engine matches your quantity against available bids."}</p>}
       {error && <p className="trade-order__message is-error" role="alert">{error}</p>}
@@ -239,7 +251,7 @@ function AccountPanel({ marketId, listed, token, refreshKey, onSignIn, onChanged
   </section>;
 }
 
-export function MarketTradePage({ marketId, token, balance, accountEventRevision, onSignIn, onMarkets, onBalances, onHome, onBalanceRefresh }: { marketId: string; token: string | null; balance: Balance | null; accountEventRevision: number; onSignIn: () => void; onMarkets: () => void; onBalances: () => void; onHome: () => void; onBalanceRefresh: () => void }) {
+export function MarketTradePage({ marketId, token, balance, accountEventRevision, onSignIn, onMarkets, onMarketLabelChange, onBalanceRefresh }: { marketId: string; token: string | null; balance: Balance | null; accountEventRevision: number; onSignIn: () => void; onMarkets: () => void; onMarketLabelChange: (label: string | null) => void; onBalanceRefresh: () => void }) {
   const [market, setMarket] = useState<Market | null>(null);
   const [preview, setPreview] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
@@ -250,6 +262,8 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const [depthRefresh, setDepthRefresh] = useState(0);
   const [feed, setFeed] = useState<"connecting" | "connected" | "offline">("offline");
   const [markExpiresAt, setMarkExpiresAt] = useState<number | null>(null);
+  const [liveMarkPrice, setLiveMarkPrice] = useState<string | null>(null);
+  const [funding, setFunding] = useState<FundingState | null>(null);
   const [now, setNow] = useState(Date.now);
   const [lastPrice, setLastPrice] = useState<string | null>(null);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
@@ -260,6 +274,7 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [chosenPrice, setChosenPrice] = useState<string | null>(null);
+  const [leverage, setLeverage] = useState("1");
   const [accountRefresh, setAccountRefresh] = useState(0);
   const [positionSummary, setPositionSummary] = useState<Position | null>(null);
   const bookUpdateVersion = useRef(0);
@@ -280,23 +295,36 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
 
   useEffect(() => {
     bookUpdateVersion.current = 0;
-    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setMarkExpiresAt(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
+    onMarketLabelChange(null);
+    setMarket(null); setDepth(null); setTrades([]); setCandles([]); setCandleError(""); setHistoryError(""); setLastPrice(null); setChosenPrice(null); setMarkExpiresAt(null); setLiveMarkPrice(null); setFunding(null); setFeed("offline"); setMarketError(""); setMarketLoading(true);
     if (previewPairs.includes(marketId)) {
       setMarket({ market_id: marketId, slug: marketId, imageUrl: "", mark_price: null, last_traded_price: null });
+      onMarketLabelChange(marketId.replaceAll("-", " / "));
       setPreview(true); setMarketLoading(false); return;
     }
     setPreview(false);
     const controller = new AbortController();
     api<{ market: Market }>(`/market/${encodeURIComponent(marketId)}`, { signal: controller.signal })
       .then(({ market }) => {
+        if (controller.signal.aborted) return;
         setMarket(market);
+        onMarketLabelChange(market.slug.replaceAll("-", " / "));
         const last = market.last_traded_price ? formatScaled(market.last_traded_price).replaceAll(",", "") : null;
         setLastPrice(last);
       })
       .catch((cause) => { if (!controller.signal.aborted) setMarketError(cause instanceof Error ? cause.message : "Market unavailable."); })
       .finally(() => { if (!controller.signal.aborted) setMarketLoading(false); });
     return () => controller.abort();
-  }, [marketId]);
+  }, [marketId, onMarketLabelChange]);
+
+  useEffect(() => {
+    if (!market || preview) return;
+    const controller = new AbortController();
+    api<{ funding: FundingState }>(`/market/${encodeURIComponent(market.market_id)}/funding`, { signal: controller.signal })
+      .then(({ funding }) => { if (!controller.signal.aborted) setFunding(funding); })
+      .catch(() => { if (!controller.signal.aborted) setFunding(null); });
+    return () => controller.abort();
+  }, [market?.market_id, preview]);
 
   useEffect(() => {
     if (!market || preview) return;
@@ -396,12 +424,15 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
           } else if (data.event_type === "TICKER") {
             const last = typeof data.last_traded_price === "string" ? data.last_traded_price : null;
             if (last) setLastPrice(last);
+            if (typeof data.mark_price === "string") setLiveMarkPrice(data.mark_price);
             if (typeof data.mark_expires_at_ms === "number" && Number.isFinite(data.mark_expires_at_ms)) {
               setMarkExpiresAt(data.mark_expires_at_ms);
             }
             if (typeof data.trading_halted === "boolean") {
               setMarket((current) => current ? { ...current, trading_halted: data.trading_halted as boolean } : current);
             }
+          } else if (data.event_type === "FUNDING" && typeof data.rate === "string" && typeof data.ready === "boolean" && typeof data.next_funding_ms === "number") {
+            setFunding({ rate: data.rate, ready: data.ready, next_funding_ms: data.next_funding_ms });
           }
         } catch { /* Ignore the WebSocket greeting and subscription acknowledgements. */ }
       };
@@ -416,6 +447,17 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
   const listed = Boolean(market && !preview);
   const ticker = tickerFromTrades(trades, Date.now());
   const current = trades.at(-1)?.price ?? lastPrice;
+  const markPrice = liveMarkPrice ?? (market?.mark_price ? formatScaled(market.mark_price).replaceAll(",", "") : null);
+  const referencePrice = market ? seedPrice(market.slug) : null;
+  const displayPrice = current ?? markPrice ?? (referencePrice === null ? null : String(referencePrice));
+  const displayMark = markPrice ?? (referencePrice === null ? null : String(referencePrice));
+  const referenceTicker = market ? seedTicker(market.slug) : null;
+  const illustrativeChart = candles.length === 0;
+  const illustrativeDepth = Boolean(market) && !depth?.asks.length && !depth?.bids.length;
+  const illustrativeTrades = Boolean(market) && trades.length === 0;
+  const displayCandles = illustrativeChart && market ? seedCandles(market.slug) : candles;
+  const displayDepth = illustrativeDepth && market ? seedDepth(market.slug) : depth;
+  const displayTrades = illustrativeTrades && market ? seedTrades(market.slug) : trades.slice(-20).reverse();
   const icon = icons[label.base];
   const assetAccent = ({ BTC: "#f6a126", ETH: "#7187df", SUI: "#68bde0", SOL: "#53bd8b", DOGE: "#e1b83e", LTC: "#5b86cc", MATIC: "#8c50e8", UNI: "#da2fab" } as Record<string, string>)[label.base] ?? "#c3b6ec";
   const markFresh = feed === "connected" && markExpiresAt !== null && markExpiresAt >= now;
@@ -434,11 +476,6 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
 
   return <main className="trade-page" data-asset={label.base}>
     <div className="trade-page__inner">
-      <header className="trade-shell-head">
-        <button type="button" className="trade-shell-head__brand" onClick={onHome} aria-label="APEX Exchange home"><span className="trade-shell-head__mark">∧</span><span>APEX <small>EXCHANGE</small></span></button>
-        <div className="trade-shell-head__context"><strong>Trading desk</strong><span>{marketLoading ? "Loading market" : `${label.base} / ${label.quote} perpetual market`}</span></div>
-        <div className="trade-shell-head__actions"><button type="button" className="trade-shell-head__search" onClick={onMarkets}><span aria-hidden="true">⌕</span> Browse markets <kbd>↗</kbd></button><button type="button" onClick={onBalances}>Balances</button>{token ? <button type="button" className="trade-shell-head__account" onClick={onBalances}>Account ↗</button> : <button type="button" className="trade-shell-head__account" onClick={onSignIn}>Sign in ↗</button>}</div>
-      </header>
       <div className="trade-shell-banner" role="status"><span className="trade-shell-banner__icon">!</span><span>{feedMessage}</span><span className="trade-shell-banner__end">APEX / PERPETUAL</span></div>
       {marketError && <div className="trade-page__notice" role="status">{marketError}</div>}
       <div className="trade-desk">
@@ -447,9 +484,9 @@ export function MarketTradePage({ marketId, token, balance, accountEventRevision
         <section className="trade-overview__card trade-overview__card--collateral" aria-label="Collateral summary"><div className="trade-overview__heading"><span>ACCOUNT BALANCE</span><svg className="trade-overview__symbol" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7.5h15v11H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M15 12h6v4h-6a2 2 0 0 1 0-4Z" stroke="currentColor" strokeWidth="1.5"/></svg></div><strong className="trade-overview__value">{collateral !== null && Number.isFinite(collateral) ? collateral.toLocaleString(undefined, { maximumFractionDigits: 4 }) : "–"}<small> USDT</small></strong><p>{balance ? <>Available <b>{grouped(balance.available)}</b><span className="trade-overview__separator">/</span> Reserved <b>{grouped(balance.reserved)}</b></> : token ? "Loading collateral balance" : "Sign in to view your collateral"}</p></section>
       </div>
       <div className="trade-workspace">
-        <MarketCandlestickChart sourceCandles={candles} connected={feed === "connected"} loading={candleLoading} error={candleError} marketLabel={market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")} marketIcon={icon} accentColor={assetAccent} lastPrice={current ? grouped(current) : null} changePercent={ticker?.changePercent ?? null} volume={ticker?.volume ?? null} illustrative={preview} onMarkets={onMarkets} />
-        <OrderBook depth={depth} loading={depthLoading} error={depthError} current={current} trades={trades.slice(-20).reverse()} connected={feed === "connected"} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
-        <OrderForm marketId={marketId} listed={listed} halted={Boolean(market?.trading_halted)} token={token} currentPrice={current} selectedPrice={chosenPrice} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
+        <MarketCandlestickChart sourceCandles={displayCandles} connected={feed === "connected"} loading={candleLoading} error={candleError} marketLabel={market?.slug.replaceAll("-", " / ") ?? (marketLoading ? "Loading market…" : "Market unavailable")} marketIcon={icon} leverage={validPositive(leverage) ? leverage : "—"} accentColor={assetAccent} lastPrice={displayPrice} headlineLabel={current ? "LAST TRADED PRICE" : markPrice ? "MARK PRICE" : "USD SPOT REFERENCE"} markPrice={displayMark} markIllustrative={markPrice === null} priceIllustrative={current === null && markPrice === null} statsIllustrative={ticker === null} changePercent={ticker?.changePercent ?? referenceTicker?.changePercent ?? null} high={ticker?.high ?? referenceTicker?.high ?? null} low={ticker?.low ?? referenceTicker?.low ?? null} volume={ticker?.volume ?? referenceTicker?.volume ?? null} funding={funding} now={now} illustrative={illustrativeChart} onMarkets={onMarkets} />
+        <OrderBook depth={displayDepth} loading={depthLoading} error={depthError} current={displayPrice} trades={displayTrades} connected={feed === "connected"} illustrativeDepth={illustrativeDepth} illustrativeTrades={illustrativeTrades} onChoosePrice={setChosenPrice} onRefresh={() => setDepthRefresh((value) => value + 1)} />
+        <OrderForm marketId={marketId} listed={listed} halted={Boolean(market?.trading_halted)} token={token} currentPrice={current} selectedPrice={chosenPrice} leverage={leverage} onLeverageChange={setLeverage} onSignIn={onSignIn} onPlaced={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
         <AccountPanel marketId={marketId} listed={listed} token={token} refreshKey={accountRefresh + accountEventRevision} onSignIn={onSignIn} onChanged={() => { setAccountRefresh((value) => value + 1); onBalanceRefresh(); }} />
       </div>
       </div>

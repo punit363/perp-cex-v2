@@ -23,7 +23,7 @@ function WalletIcon({ type }: { type: "available" | "reserved" | "total" }) {
   return <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 23V9a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3Z" stroke="currentColor" strokeWidth="1.8" /><path d="M11 19.5 15 15l3 2.5 4-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
-export function BalanceDashboard({ balance, loading, error, username, token, onRefresh, onSignIn }: {
+export function BalanceDashboard({ balance, loading, error, username, token, onRefresh, onSignIn, onSignOut }: {
   balance: Balance | null;
   loading: boolean;
   error: string;
@@ -31,6 +31,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
   token: string | null;
   onRefresh: () => Promise<void>;
   onSignIn: () => void;
+  onSignOut: () => void;
 }) {
   const [amount, setAmount] = useState("");
   const [adding, setAdding] = useState(false);
@@ -98,6 +99,7 @@ export function BalanceDashboard({ balance, loading, error, username, token, onR
           <div className="wallet-page__actions">
             <span className={`wallet-page__session ${username ? "is-connected" : ""}`}><i />{username ? `${username}'s account` : "Account not connected"}</span>
             {username && <button type="button" className="wallet-page__refresh" onClick={() => void onRefresh()} disabled={loading} aria-label="Refresh balances" title="Refresh balances"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.2-5.5M20 4v5h-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>}
+            {username && <button type="button" className="wallet-page__signout" onClick={onSignOut}>Sign out</button>}
           </div>
         </div>
 
