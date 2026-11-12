@@ -111,6 +111,9 @@ subdomain that you control, for example `exchange.example.com`. Point its DNS
 obtain and renew a certificate automatically when the hostname resolves and
 ports 80/443 are reachable. The frontend uses same-origin `/api/v1` and `/ws`
 paths in production, so there is no separate frontend URL to configure.
+WebSocket connections are allowed from that HTTPS origin by default. If the
+frontend moves to another origin, set `WS_ALLOWED_ORIGINS` to its full origin
+(including `https://`) in `.env` and recreate the `ws` service.
 
 For a short first check without a hostname, keep `SITE_ADDRESS=:80` and open
 `http://YOUR_PUBLIC_IP`. This is plain HTTP; switch to a hostname and HTTPS
@@ -154,3 +157,13 @@ current crash recovery also depends on the engine snapshot and Redis stream,
 so keep their volumes together with PostgreSQL when moving or backing up the
 deployment. This single-instance setup is suitable for a demo; losing the EBS
 disk would lose all three stores unless they have been backed up elsewhere.
+
+## Public request limits
+
+The API allows 600 requests per minute per client IP. Order placement and
+cancellation share a limit of 120 requests per minute per authenticated user;
+the existing sign-in and demo top-up limits also apply. A WebSocket accepts at
+most 20 concurrent connections per client IP, 80 topics per connection, 120
+messages per minute per connection, and 4 KiB per incoming message. These
+limits are held in each service's memory and reset on restart. Caddy applies
+security response headers, including a Content Security Policy, to the site.
