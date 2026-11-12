@@ -2,10 +2,12 @@ import express from "express";
 import CONFIG from "./config";
 import cors from "cors";
 import apiRouter from "./routes";
+import { demoRateLimit } from "./middleware/demo-rate-limit";
 
 const app = express();
 // Caddy is the sole public entry point and replaces client-supplied forwarded headers.
 app.set("trust proxy", 1);//trust 1 proxy hop (client->loadb.) , 2 inlcudes cdn
+app.use("/api/v1", demoRateLimit(600, 60_000, (request) => request.ip || "unknown"));
 app.use(cors({ origin: CONFIG.cors_origins }));
 app.use(express.json({ limit: "16kb" }));
 
