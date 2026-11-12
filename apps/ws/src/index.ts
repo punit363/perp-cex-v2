@@ -7,6 +7,17 @@ import type { PublicEventType, SocketData } from "./types";
 const redis = new RedisHandler();
 //saves socketconnection by each user and what they have subscribed to
 const subscriptions = new Map<ServerWebSocket<SocketData>, Set<string>>();
+const connectionsByIp = new Map<string, number>();
+
+const releaseConnection = (clientIp: string): void => {
+  const remaining = (connectionsByIp.get(clientIp) || 1) - 1;
+  if (remaining > 0) connectionsByIp.set(clientIp, remaining);
+  else connectionsByIp.delete(clientIp);
+};
+
+const canSubscribe = (topics: Set<string>, key: string): boolean => {
+  return topics.has(key) || topics.size < CONFIG.maxTopicsPerSocket;
+};
 
 const isPublicEventType = (value: unknown): value is PublicEventType => {
   return (
@@ -38,17 +49,51 @@ const verifyToken = (token: unknown): string | null => {
 Bun.serve<SocketData>({
   port: CONFIG.port,
   fetch(req, server) {
-    const success = server.upgrade(req, { data: { user_id: null } });
+    const origin = req.headers.get("origin");
+    const forwardedHost = req.headers.get("x-forwarded-host");
+    const sameHttpHost = CONFIG.allowHttpSameHost
+      && forwardedHost !== null && origin === `http://${forwardedHost}`;
+    if (!origin || (!CONFIG.allowedOrigins.has(origin) && !sameHttpHost)) {
+      return new Response("WebSocket origin is not allowed", { status: 403 });
+    }
+
+    // Caddy replaces untrusted X-Forwarded-For values before proxying.
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+      || server.requestIP(req)?.address || "unknown";
+    const count = connectionsByIp.get(clientIp) || 0;
+    if (count >= CONFIG.maxConnectionsPerIp) {
+      return new Response("Too many WebSocket connections", { status: 429 });
+    }
+    connectionsByIp.set(clientIp, count + 1);
+
+    const success = server.upgrade(req, {
+      data: { user_id: null, clientIp, messagesInWindow: 0, windowStartedAt: Date.now() },
+    });
     if (success) return undefined;
+    releaseConnection(clientIp);
     return new Response("This is a WebSocket server. Please connect via WS.");
   },
   websocket: {
+    maxPayloadLength: CONFIG.maxPayloadLength,
+    backpressureLimit: 128 * 1024,
+    closeOnBackpressureLimit: true,
     open(ws) {
       //on new connection save it to subscription map
       subscriptions.set(ws, new Set());
       ws.send("Connection secured with Apex ws service");
     },
     message(ws, message) {
+      const now = Date.now();
+      if (now - ws.data.windowStartedAt >= CONFIG.messageWindowMs) {
+        ws.data.windowStartedAt = now;
+        ws.data.messagesInWindow = 0;
+      }
+      ws.data.messagesInWindow += 1;
+      if (ws.data.messagesInWindow > CONFIG.maxMessagesPerWindow) {
+        ws.close(1008, "Message rate exceeded");
+        return;
+      }
+
       let data: unknown;
       try {
         data = JSON.parse(message.toString());
@@ -102,6 +147,10 @@ Bun.serve<SocketData>({
           );
           return;
         }
+        if (action === "SUBSCRIBE" && !canSubscribe(topics, "ACCOUNT")) {
+          ws.send(JSON.stringify({ error: "Subscription limit reached" }));
+          return;
+        }
         if (action === "SUBSCRIBE") topics.add("ACCOUNT");
         else topics.delete("ACCOUNT");
         ws.send(JSON.stringify({ action, type }));
@@ -116,6 +165,10 @@ Bun.serve<SocketData>({
       //subscribe to market data
       const key = subscriptionKey(type, market_id);
       if (action === "SUBSCRIBE") {
+        if (!canSubscribe(topics, key)) {
+          ws.send(JSON.stringify({ error: "Subscription limit reached" }));
+          return;
+        }
         topics.add(key);
       } else {
         topics.delete(key);
@@ -125,6 +178,7 @@ Bun.serve<SocketData>({
     close(ws, code, reason) {
       //delete the socket before ending the connection
       subscriptions.delete(ws);
+      releaseConnection(ws.data.clientIp);
       console.log(`Client disconnected: ${code} - ${reason}`);
     },
   },
