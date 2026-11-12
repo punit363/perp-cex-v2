@@ -11,6 +11,7 @@ export const SUPPORTED_MARKET_SLUGS = [
   "LINK-USDT",
   "LTC-USDT",
   "OP-USDT",
+  "SOL-USDT",
   "UNI-USDT",
   "USDC-USDT",
   "XRP-USDT",
