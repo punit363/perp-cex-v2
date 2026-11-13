@@ -239,7 +239,7 @@ function ExchangePreview({
             <i />
           </span>
           <span className="landing-preview__address">
-            apex.exchange / trading desk
+            pex.exchange / trading desk
           </span>
           <span className="landing-preview__browser-end">
             ◯ &nbsp; ↗ &nbsp; ▫
@@ -248,7 +248,7 @@ function ExchangePreview({
       )}
       <div className="landing-preview__appbar">
         <span className="landing-preview__brand">
-          <b>∧</b> APEX
+          <b>∧</b> PEX
         </span>
         <span>Markets</span>
         <span>Perpetuals</span>
@@ -559,7 +559,7 @@ export function LandingPage({
           </div>
           <div className="landing-hero__marker landing-hero__marker--two">
             <span>PERPETUAL DESK</span>
-            <strong>APEX</strong>
+            <strong>PEX</strong>
           </div>
         </div>
         <header className="landing-nav">
@@ -570,7 +570,7 @@ export function LandingPage({
           >
             <span className="landing-nav__mark">∧</span>
             <span>
-              APEX <small>EXCHANGE</small>
+              PEX <small>EXCHANGE</small>
             </span>
           </button>
           <div className="landing-nav__account">
@@ -608,7 +608,7 @@ export function LandingPage({
             <h1 id="landing-hero-title" className="landing-hero__title">
               Money
               <br />
-              Talks
+              Matter
             </h1>
             <div className="landing-hero__actions">
               <button
@@ -646,7 +646,7 @@ export function LandingPage({
             the crypto market.
           </h2>
           <p>
-            Scan the pairs available on APEX, then open the market that matters
+            Scan the pairs available on PEX, then open the market that matters
             to you.
           </p>
         </div>
@@ -855,7 +855,7 @@ export function LandingPage({
       </section>
 
       <footer className="landing-footer">
-        <span>∧ APEX EXCHANGE</span>
+        <span>∧ PEX EXCHANGE</span>
         <span>Simulated perpetual trading environment</span>
         <button type="button" onClick={onMarkets}>
           Markets ↗

@@ -45,7 +45,7 @@ export function AppNav({ page, accessMode, marketLabel, signedIn, onHome, onMark
   return <header className="app-nav">
     <div className="app-nav__left">
       <button type="button" className="app-nav__brand" onClick={onHome} aria-label="Apex Exchange overview">
-        <strong>APEX</strong><span>EXCHANGE</span>
+        <strong>PEX</strong><span>EXCHANGE</span>
       </button>
       <span className="app-nav__divider" aria-hidden="true" />
       <nav className="app-nav__breadcrumbs" aria-label="Breadcrumb">

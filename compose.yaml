@@ -101,6 +101,8 @@ services:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
+    ports:
+      - "8000:8000"
 
   ws:
     <<: *runtime
@@ -116,6 +118,8 @@ services:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
+    ports:
+      - "7001:7001"
 
   web:
     image: apex-web:local

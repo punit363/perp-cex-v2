@@ -146,6 +146,10 @@
 .trade-overview__value small, .trade-overview__card p,
 .trade-overview__metrics span { color: #747f93; }
 .trade-overview__card p b, .trade-overview__metrics strong { color: #f2f3f5; }
+.trade-overview__card p .trade-overview__balance--available,
+.trade-overview__card p .trade-overview__balance--available b { color: #53bd8b; }
+.trade-overview__card p .trade-overview__balance--reserved,
+.trade-overview__card p .trade-overview__balance--reserved b { color: #d96379; }
 .trade-overview__card--pnl .trade-overview__value.is-positive,
 .trade-chart__quote .is-positive { color: #53bd8b; }
 .trade-overview__card--pnl .trade-overview__value.is-negative,
