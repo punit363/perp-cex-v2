@@ -38,10 +38,10 @@ Choose the frontend's local port with `WEB_HTTP_PORT`. Keep `SITE_ADDRESS=:80`, 
 
 ```dotenv
 SITE_ADDRESS=:80
-WEB_HTTP_PORT=18080
+WEB_HTTP_PORT=3000
 ```
 
-Open `http://localhost:18080` for this example. You can use any free host port, such as `3000`; open `http://localhost:<WEB_HTTP_PORT>` using the value you selected. If port 443 is occupied locally, you can also change `WEB_HTTPS_PORT`.
+Open `http://localhost:3000` for this example. You can use any free host port, such as `3000`; open `http://localhost:<WEB_HTTP_PORT>` using the value you selected. If port 443 is occupied locally, you can also change `WEB_HTTPS_PORT`.
 
 Start the stack with the Compose command installed on your machine:
 
