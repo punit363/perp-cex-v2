@@ -22,7 +22,7 @@ These are visual estimates from the screenshot, not extracted source CSS.
 | Secondary text | `#a0a9bb` | Labels and navigation |
 | Muted text | `#747f93` | Descriptions and empty states |
 | Selected neutral fill | `#252331` | Selected filter or period |
-| Selected neutral text | `#c3b6ec` | Selected filter label |
+| Selected accent text | `#0BDA51` | Selected filter label |
 | Warning fill | `#1c1915` | Service-unavailable notice |
 | Warning border | `#3a3429` | Notice outline |
 | Warning text | `#b9b1a5` | Notice message |

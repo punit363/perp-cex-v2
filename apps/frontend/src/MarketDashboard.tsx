@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { StoredCandle } from "./marketData";
-import { SEED_LABEL, seedMarketSlugs, seedPrice, seedStats } from "./marketSeed";
+import { SEED_LABEL, seedMarketSlugs, seedMaxLeverageScaled, seedPrice, seedStats } from "./marketSeed";
 import aaveIcon from "../public/icons/aave_coin.png";
 import adaIcon from "../public/icons/ada_coin.png";
 import avaxIcon from "../public/icons/avax_coin.png";
@@ -28,6 +28,7 @@ export type Market = {
   imageUrl: string;
   mark_price: string | null;
   last_traded_price: string | null;
+  max_leverage?: string | null;
   trading_halted?: boolean;
 };
 type Quote = { mark_price?: string; mark_expires_at_ms?: number; last_traded_price?: string };
@@ -463,6 +464,7 @@ export function MarketDashboard({
           imageUrl: "",
           mark_price: null,
           last_traded_price: null,
+          max_leverage: seedMaxLeverageScaled(slug),
         }))
       : markets
   ).map((market) => ({ ...market, ...partsOf(market.slug), preview }))
@@ -476,7 +478,7 @@ export function MarketDashboard({
     return [market.market_id, recorded.points.length ? recorded : seedStats(market.slug, days)];
   }));
   const showingReferences = all.some((market) => !statsFor(candles[market.market_id] ?? [], days).points.length);
-  const featured: ViewMarket[] = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+  const featured: ViewMarket[] = ["BTC", "ETH", "SOL", "AVAX", "DOGE"]
     .map(
       (base) =>
         all.find((market) => market.base === base && market.quote === "USDT") ??

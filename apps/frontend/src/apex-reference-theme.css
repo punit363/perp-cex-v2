@@ -7,12 +7,12 @@
   --lp-bg: #090b0d;
   --lp-surface: #0e1014;
   --lp-border: #20242c;
-  --lp-green: #c3b6ec;
+  --lp-green: #0BDA51;
   --lp-muted: #747f93;
   background: #090b0d;
   color: #f2f3f5;
 }
-.landing-v2 :is(button, a, input):focus-visible { outline-color: #c3b6ec; }
+.landing-v2 :is(button, a, input):focus-visible { outline-color: #0BDA51; }
 .landing-hero, .landing-markets, .landing-platform, .landing-products,
 .landing-capabilities, .landing-capabilities__grid div { background: #090b0d; }
 .landing-hero__field { background: radial-gradient(ellipse 85% 62% at 82% 45%, #24233130, transparent 68%); }
@@ -28,14 +28,14 @@
 .landing-hero__scroll, .landing-market-tile__copy strong span,
 .landing-market-tile__copy small, .landing-markets__empty,
 .landing-capabilities__grid p, .landing-footer { color: #747f93; }
-.landing-nav nav :is(button, a):hover { color: #c3b6ec; }
-.landing-pill--green, .landing-nav__signup { background: #c3b6ec; color: #090b0d !important; }
-.landing-pill--green:hover, .landing-nav__signup:hover { background: #d6cdf2; }
+.landing-nav nav :is(button, a):hover { color: #0BDA51; }
+.landing-pill--green, .landing-nav__signup { background: #0BDA51; color: #090b0d !important; }
+.landing-pill--green:hover, .landing-nav__signup:hover { background: #35E872; }
 .landing-pill--dark, .landing-nav__signin { border-color: #20242c; background: #171a20; color: #f2f3f5; }
 .landing-pill--dark:hover, .landing-nav__signin:hover { border-color: #414757; background: #20242c; }
 .landing-markets__tabs { border-color: #20242c; background: #0e1014; }
 .landing-markets__tabs button { color: #a0a9bb; }
-.landing-markets__tabs button.is-active { background: #252331; color: #c3b6ec; }
+.landing-markets__tabs button.is-active { background: #252331; color: #0BDA51; }
 .landing-market-tile { border-color: #20242c; background: #0e1014; color: #f2f3f5; }
 .landing-market-tile:hover { border-color: #7187df; }
 .landing-market-tile__icon { background: #171a20; }
@@ -80,35 +80,35 @@
   --access-rule: #20242c;
   --access-text: #f2f3f5;
   --access-muted: #a0a9bb;
-  --access-accent: #c3b6ec;
+  --access-accent: #0BDA51;
   background: #090b0d;
 }
-.access-page button:focus-visible, .access-page input:focus-visible { outline-color: #c3b6ec; }
+.access-page button:focus-visible, .access-page input:focus-visible { outline-color: #0BDA51; }
 .access-page__field { background: radial-gradient(ellipse 54% 68% at 8% 68%, #25233140, transparent 70%), linear-gradient(90deg, #090b0d 0%, #090b0dbf 48%, transparent 100%); }
 .access-page__field i { background: #7187df1f; }
 .access-page__header { border-color: #20242c; }
 .access-page__brand small, .access-page__markets, .access-page__eyebrow,
 .access-page__form label, .access-page__signal, .access-page__note { color: #a0a9bb; }
 .access-page__mark { color: #f2f3f5; }
-.access-page__markets span, .access-page__markets:hover { color: #c3b6ec; }
-.access-page__signal b { color: #c3b6ec; }
+.access-page__markets span, .access-page__markets:hover { color: #0BDA51; }
+.access-page__signal b { color: #0BDA51; }
 .access-page__signal i { background: linear-gradient(0deg, #7187df, #343b59); }
 .access-page__panel { background: #0e1014; border-color: #20242c; box-shadow: none; }
 .access-page__tabs { border-color: #20242c; }
 .access-page__tabs button { color: #a0a9bb; }
-.access-page__tabs button.is-active { border-color: #c3b6ec; color: #f2f3f5; }
+.access-page__tabs button.is-active { border-color: #0BDA51; color: #f2f3f5; }
 .access-page__form input { border-color: #20242c; background: #171a20; color: #f2f3f5; }
 .access-page__form input::placeholder { color: #747f93; }
 .access-page__form input:hover, .access-page__password:focus-within input { border-color: #7187df; }
 .access-page__password button { color: #a0a9bb; }
-.access-page__submit { background: #c3b6ec; color: #090b0d; }
-.access-page__submit:hover { background: #d6cdf2; }
+.access-page__submit { background: #0BDA51; color: #090b0d; }
+.access-page__submit:hover { background: #35E872; }
 .access-page__connected-mark { border-color: #20242c; background: #171a20; }
 .access-page .form-message--error { color: #e88798; }
 .access-page .form-message--success { color: #77cea1; }
 
 /* Trade: preserve the existing desk grid and control dimensions. */
-.trade-page { --trade-asset-accent: #c3b6ec; background: #090b0d; color: #f2f3f5; }
+.trade-page { --trade-asset-accent: #0BDA51; background: #090b0d; color: #f2f3f5; }
 .trade-page[data-asset="BTC"] { --trade-asset-accent: #f6a126; }
 .trade-page[data-asset="ETH"] { --trade-asset-accent: #7187df; }
 .trade-page[data-asset="SUI"] { --trade-asset-accent: #68bde0; }
@@ -118,7 +118,7 @@
 .trade-page[data-asset="MATIC"] { --trade-asset-accent: #8c50e8; }
 .trade-page[data-asset="UNI"] { --trade-asset-accent: #da2fab; }
 .trade-page__inner { background: #090b0d; }
-.trade-page :is(button, input):focus-visible { outline-color: #c3b6ec; }
+.trade-page :is(button, input):focus-visible { outline-color: #0BDA51; }
 .trade-shell-head { border-color: #20242c; }
 .trade-shell-head__brand, .trade-shell-head__context strong { color: #f2f3f5; }
 .trade-shell-head__brand small, .trade-shell-head__context span { color: #a0a9bb; }
@@ -159,10 +159,49 @@
 .trade-order form input { background: #171a20; }
 .trade-chart__pair { color: #f2f3f5; }
 .trade-chart__pair:hover { background: #20242c; }
+.trade-chart__pair:focus-visible { outline: 2px solid #0BDA51; outline-offset: 2px; }
+.trade-chart__pair[aria-expanded="true"] { background: #252331; }
+.trade-chart__market-menu {
+  position: fixed;
+  z-index: 1000;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid #303541;
+  border-radius: 0.375rem;
+  background: #171a20;
+  box-shadow: 0 18px 48px #000b;
+  scrollbar-color: #485160 #171a20;
+}
+.trade-chart__market-option {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr) auto 12px;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 31px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #f2f3f5;
+  text-align: left;
+  cursor: pointer;
+}
+.trade-chart__market-option:hover,
+.trade-chart__market-option:focus-visible { outline: none; background: #252b35; }
+.trade-chart__market-option[aria-checked="true"] { background: #262a31; }
+.trade-chart__market-option[aria-checked="true"]:hover,
+.trade-chart__market-option[aria-checked="true"]:focus-visible { background: #323741; }
+.trade-chart__market-icon { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: #252b35; color: #f2f3f5; font: 600 11px/1 Inter, sans-serif; }
+.trade-chart__market-icon img { width: 21px; height: 21px; object-fit: contain; }
+.trade-chart__market-name { overflow: hidden; font: 600 12px/1.2 Inter, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.trade-chart__market-limit { color: #a0a9bb; font: 500 11px/1.2 'JetBrains Mono', ui-monospace, monospace; white-space: nowrap; }
+.trade-chart__market-check { color: #f2f3f5; font-size: 13px; visibility: hidden; }
+.trade-chart__market-option[aria-checked="true"] .trade-chart__market-check { visibility: visible; }
 .trade-chart__pair-icon i { border-color: #0e1014; }
 .trade-chart__modes button, .trade-chart__periods button { color: #a0a9bb; }
 .trade-chart__modes button.is-active,
-.trade-chart__periods button.is-active { background: #252331; color: #c3b6ec; }
+.trade-chart__periods button.is-active { background: #252331; color: #0BDA51; }
 .trade-chart__change > span { color: #747f93; }
 .trade-chart__change > span:first-child { background: #173329; color: #53bd8b; }
 .trade-chart__change > span:first-child.is-negative { background: #3a202a; color: #d96379; }
@@ -178,24 +217,79 @@
 .trade-order__estimate, .trade-account__title,
 .trade-account__header { border-color: #1b2027; }
 .trade-book__tabs button.is-active, .trade-order__types button.is-active,
-.trade-account__tabs button.is-active { border-color: #c3b6ec; }
-.trade-book__columns, .trade-account th { color: #747f93; }
-.trade-book__mid { background: #171a20; }
-.trade-book__mid strong, .trade-account td { color: #f2f3f5; }
-.trade-book__side--ask .trade-book__price,
+.trade-account__tabs button.is-active { border-color: #0BDA51; }
+.trade-account th { color: #747f93; }
+.trade-account td { color: #f2f3f5; }
 .trade-account .is-sell { color: #d96379; }
-.trade-book__side--bid .trade-book__price,
 .trade-account .is-buy { color: #53bd8b; }
-.trade-book__side--ask .trade-book__bar { background: #d9637922; }
-.trade-book__side--bid .trade-book__bar { background: #53bd8b22; }
+.trade-book__tabs button { color: #a0a9bb; }
+.trade-book__tabs button.is-active { color: #f2f3f5; }
+.trade-book__columns, .trade-book__trade-head { color: #a0a9bb; }
+.trade-book__side button { color: #e8edf3; font-size: 13px; font-weight: 600; }
+.trade-book__side button > span:nth-child(4) { color: #aeb8c6; }
+.trade-book__side--ask .trade-book__price { color: #f17486; }
+.trade-book__side--bid .trade-book__price { color: #65d79b; }
+.trade-book__side--ask .trade-book__bar { background: #d9637933; }
+.trade-book__side--bid .trade-book__bar { background: #53bd8b33; }
+.trade-book__mid { background: #1b2025; }
+.trade-book__mid strong { color: #65d79b; }
 .trade-order__market { border-color: #303541; color: #a0a9bb; }
 .trade-order__sides { border-color: #20242c; }
 .trade-order__sides button.is-buy { background: #53bd8b; color: #090b0d; }
 .trade-order__sides button.is-sell { background: #d96379; color: #090b0d; }
 .trade-order form input { border-color: #20242c; color: #f2f3f5; }
-.trade-order form input:focus { outline-color: #c3b6ec; }
+.trade-order form input:focus { outline-color: #0BDA51; }
+.trade-order form .trade-order__leverage { margin: 0 0 20px; }
+.trade-order form .trade-order__leverage-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: #a0a9bb; font-size: 13px; }
+.trade-order form .trade-order__leverage-head label { margin: 0; font-size: inherit; font-weight: 500; }
+.trade-order__leverage-head > span { color: #747f93; font-variant-numeric: tabular-nums; }
+.trade-order__leverage-head strong { color: #f2f3f5; font-weight: 650; }
+.trade-order form input[type="range"] { appearance: none; width: 100%; height: 4px; margin: 20px 0 21px; padding: 0; border: 0; border-radius: 4px; background: linear-gradient(to right, #0BDA51 var(--leverage-progress), #626c79 var(--leverage-progress)); cursor: pointer; }
+.trade-order form input[type="range"]::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; border: 0; border-radius: 50%; background: #f2f3f5; box-shadow: 0 0 0 2px #0e1014; }
+.trade-order form input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: #f2f3f5; box-shadow: 0 0 0 2px #0e1014; }
+.trade-order form input[type="range"]:focus-visible { outline: 2px solid #0BDA51; outline-offset: 6px; }
+.trade-order__leverage-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.trade-order__leverage-presets button { min-height: 38px; padding: 0 4px; border: 1px solid #20242c; border-radius: 8px; background: #171a20; color: #a0a9bb; font: 600 13px/1 'JetBrains Mono', ui-monospace, monospace; cursor: pointer; }
+.trade-order__leverage-presets button:hover:not(:disabled) { border-color: #766b92; color: #f2f3f5; }
+.trade-order__leverage-presets button.is-active { border-color: #5e5578; background: #252331; color: #f2f3f5; }
+.trade-order__leverage-presets button:focus-visible { outline: 2px solid #0BDA51; outline-offset: 2px; }
+.trade-order__leverage-presets button:disabled { opacity: .4; cursor: not-allowed; }
 .trade-order__submit:not(.is-sell) { background: #53bd8b; color: #090b0d; }
 .trade-order__submit.is-sell { background: #d96379; color: #090b0d; }
 .trade-order__submit:disabled { background: #20242c; color: #747f93; }
-.trade-account__empty button { border-color: #303541; background: #171a20; color: #c3b6ec; }
-.trade-icon-button:hover { border-color: #c3b6ec; color: #c3b6ec; }
+.trade-account__empty button { border-color: #303541; background: #171a20; color: #0BDA51; }
+.trade-icon-button:hover { border-color: #0BDA51; color: #0BDA51; }
+
+/* Keep the tighter corners and spacing inside the market trading view. */
+.trade-page .trade-page__inner,
+.trade-page .trade-desk,
+.trade-page .trade-workspace { gap: 7px; }
+.trade-page :is(
+  .trade-overview__card,
+  .trade-chart,
+  .trade-book,
+  .trade-order,
+  .trade-account,
+  .trade-page__notice,
+  .trade-shell-banner,
+  .trade-chart__pair,
+  .trade-chart__modes,
+  .trade-chart__periods,
+  .trade-chart__stats > div,
+  .trade-order__sides,
+  .trade-order__leverage-presets button,
+  .trade-order__submit,
+  .trade-icon-button,
+  .trade-account__empty button,
+  .trade-account__cancel
+) { border-radius: 0.375rem; }
+.trade-page .trade-order__sides button,
+.trade-page .trade-order form input:not([type="range"]),
+.trade-page .trade-chart__modes button,
+.trade-page .trade-chart__periods button { border-radius: 0.375rem; }
+
+@media (max-width: 850px) {
+  .trade-page .trade-page__inner,
+  .trade-page .trade-desk,
+  .trade-page .trade-workspace { gap: 5.6px; }
+}

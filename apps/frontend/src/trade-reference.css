@@ -849,9 +849,6 @@
   color: #ed884c;
   font-weight: 650;
 }
-.trade-chart__funding.is-pending strong b {
-  color: #827d84;
-}
 .trade-chart__funding strong em {
   color: #827d84;
   font-style: normal;

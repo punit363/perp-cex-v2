@@ -8,7 +8,7 @@ export type TradeRecord = {
   time: number;
 };
 
-export type CandleInterval = "all" | "1m" | "3m" | "1h" | "1d";
+export type CandleRange = "all" | "1h" | "1d" | "1M" | "3M";
 export type StoredCandle = {
   start_ms: number;
   open: string;
@@ -21,12 +21,33 @@ export type StoredCandle = {
 };
 
 const minute = 60_000;
-const intervals: Record<Exclude<CandleInterval, "all">, number> = {
-  "1m": minute,
-  "3m": 3 * minute,
-  "1h": 60 * minute,
-  "1d": 24 * 60 * minute,
+const hour = 60 * minute;
+const day = 24 * hour;
+const candleDurations: Record<Exclude<CandleRange, "all">, number> = {
+  "1h": minute,
+  "1d": hour,
+  "1M": day,
+  "3M": day,
 };
+
+export function candleRangeStart(range: CandleRange, endMs: number): number | null {
+  if (range === "all") return null;
+  if (range === "1h") return endMs - hour;
+  if (range === "1d") return endMs - day;
+
+  const end = new Date(endMs);
+  const targetMonth = end.getUTCMonth() - (range === "1M" ? 1 : 3);
+  const lastDay = new Date(Date.UTC(end.getUTCFullYear(), targetMonth + 1, 0)).getUTCDate();
+  return Date.UTC(
+    end.getUTCFullYear(), targetMonth, Math.min(end.getUTCDate(), lastDay),
+    end.getUTCHours(), end.getUTCMinutes(), end.getUTCSeconds(), end.getUTCMilliseconds()
+  );
+}
+
+export function candlesInRange(source: StoredCandle[], range: CandleRange, endMs: number): StoredCandle[] {
+  const startMs = candleRangeStart(range, endMs);
+  return startMs === null ? source : source.filter((candle) => candle.start_ms >= startMs && candle.start_ms <= endMs);
+}
 
 export function mergeTrades(existing: TradeRecord[], incoming: TradeRecord[]): TradeRecord[] {
   const byId = new Map(existing.map((trade) => [trade.trade_id, trade]));
@@ -45,11 +66,11 @@ export function mergeCandles(existing: StoredCandle[], incoming: StoredCandle[])
   return [...byTime.values()].sort((a, b) => a.start_ms - b.start_ms);
 }
 
-export function candleDuration(candles: StoredCandle[], interval: CandleInterval): number {
-  if (interval !== "all") return intervals[interval];
+export function candleDuration(candles: StoredCandle[], range: CandleRange): number {
+  if (range !== "all") return candleDurations[range];
   if (candles.length < 2) return minute;
   const span = candles.at(-1)!.start_ms - candles[0]!.start_ms;
-  return [minute, 3 * minute, 15 * minute, 60 * minute, 4 * 60 * minute, 24 * 60 * minute, 7 * 24 * 60 * minute]
+  return [minute, 3 * minute, 15 * minute, hour, 4 * hour, day, 7 * day]
     .find((duration) => span / duration <= 200) ?? 30 * 24 * 60 * minute;
 }
 

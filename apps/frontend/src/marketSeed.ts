@@ -1,4 +1,5 @@
-import type { StoredCandle, TradeRecord } from "./marketData";
+import { candleRangeStart, type StoredCandle, type TradeRecord } from "./marketData";
+import { MARKET_MAX_LEVERAGE } from "../../../packages/commons/src/supported-markets";
 
 // Public Kraken USD spot snapshot, 2026-11-12 16:49 UTC. These are display-only
 // references for markets without local trade history; they are never orders.
@@ -33,6 +34,13 @@ const references: Record<string, SpotReference> = {
 
 export const seedMarketSlugs = Object.keys(references);
 export const seedPrice = (slug: string) => references[slug]?.price ?? null;
+export const seedMaxLeverage = (slug: string) =>
+  MARKET_MAX_LEVERAGE[slug as keyof typeof MARKET_MAX_LEVERAGE] ?? null;
+export const seedMaxLeverageScaled = (slug: string) => {
+  const maxLeverage = seedMaxLeverage(slug);
+  return maxLeverage === null ? null : String(maxLeverage * 100_000_000);
+};
+export const SEED_ORDER_LEVERAGE = 8;
 // The price anchors above are spot references. The change and path below are
 // illustrative demo activity, so the empty exchange does not imply that every
 // market fell in its first session. Recorded exchange candles always replace it.
@@ -74,14 +82,31 @@ export const seedCandles = (slug: string): StoredCandle[] => {
   const item = references[slug];
   if (!item) return [];
   const anchor = Math.floor(SEED_AT / 60_000) * 60_000;
+  const anchorHour = Math.floor(anchor / 3_600_000) * 3_600_000;
+  const anchorDay = Math.floor(anchor / 86_400_000) * 86_400_000;
+  const hourlyStart = anchorDay - 7 * 86_400_000;
+  const minuteStart = anchorHour - 12 * 3_600_000;
   const seed = seedMarketSlugs.indexOf(slug) + 1;
   const rows: StoredCandle[] = [];
   const open = illustrativeOpen(slug, item);
   const change = (item.price - open) / open;
-  let previous = item.price / (1 + change * 1.7);
-  for (let hour = 168; hour > 0; hour--) {
+  const weekOpen = item.price / (1 + change * 1.7);
+  let previous = weekOpen * (1 + 0.03 * Math.sin(seed));
+  const firstDaily = Math.floor(candleRangeStart("3M", SEED_AT)! / 86_400_000) * 86_400_000;
+  for (let start_ms = firstDaily; start_ms < hourlyStart; start_ms += 86_400_000) {
+    const wave = (hash(seed * 719 + start_ms / 86_400_000) - 0.5) * weekOpen * 0.025;
+    const close = Math.max(0.00000001, previous + (weekOpen - previous) * 0.04 + wave);
+    rows.push({
+      start_ms,
+      open: decimal(previous), high: decimal(Math.max(previous, close)), low: decimal(Math.min(previous, close)), close: decimal(close),
+      base_volume: decimal(item.baseVolume), quote_volume: decimal(item.baseVolume * item.price), trade_count: item.trades,
+    });
+    previous = close;
+  }
+  const firstHour = Math.round((anchorHour - hourlyStart) / 3_600_000);
+  for (let hour = firstHour; hour > 12; hour--) {
     if (hour === 24) previous = open;
-    const progress = (168 - hour) / 167;
+    const progress = (firstHour - hour) / (firstHour - 12);
     const inLastDay = hour <= 24;
     const baseline = inLastDay
       ? open + (item.price - open) * (24 - hour) / 24
@@ -89,18 +114,23 @@ export const seedCandles = (slug: string): StoredCandle[] => {
     const wave = (hash(seed * 997 + hour) - 0.5) * (inLastDay ? Math.min(item.high - item.low, Math.abs(item.price - open) * 0.3) : Math.abs(item.price - open) * 0.3);
     const close = Math.max(0.00000001, inLastDay ? Math.min(item.high, Math.max(item.low, baseline + wave)) : baseline + wave);
     rows.push({
-      start_ms: anchor - hour * 3_600_000,
-      open: decimal(previous), high: decimal(hour === 16 ? item.high : Math.max(previous, close)), low: decimal(hour === 8 ? item.low : Math.min(previous, close)), close: decimal(close),
+      start_ms: anchorHour - hour * 3_600_000,
+      open: decimal(previous), high: decimal(hour === 16 ? item.high : Math.max(previous, close)), low: decimal(Math.min(previous, close)), close: decimal(close),
       base_volume: decimal(item.baseVolume / 24), quote_volume: decimal(item.baseVolume * item.price / 24), trade_count: Math.round(item.trades / 24),
     });
     previous = close;
   }
-  // Minute points make the 1m and 3m controls useful before local candles exist.
-  for (let minute = 180; minute > 0; minute--) {
-    const close = item.price + (hash(seed * 313 + minute) - 0.5) * (item.high - item.low) * 0.08 * minute / 180;
+  // Keep the final 12 hours at minute resolution without overlapping hourly rows.
+  const lowMinuteStart = anchorHour - 8 * 3_600_000;
+  const minuteOpen = previous;
+  for (let start_ms = minuteStart; start_ms < anchor; start_ms += 60_000) {
+    const progress = (start_ms - minuteStart) / (anchor - minuteStart);
+    const baseline = minuteOpen + (item.price - minuteOpen) * progress;
+    const noise = (hash(seed * 313 + start_ms / 60_000) - 0.5) * (item.high - item.low) * 0.08 * (1 - progress);
+    const close = Math.max(0.00000001, Math.min(item.high, Math.max(item.low, baseline + noise)));
     rows.push({
-      start_ms: anchor - minute * 60_000,
-      open: decimal(previous), high: decimal(Math.max(previous, close)), low: decimal(Math.min(previous, close)), close: decimal(close),
+      start_ms,
+      open: decimal(previous), high: decimal(Math.max(previous, close)), low: decimal(start_ms === lowMinuteStart ? Math.min(item.low, previous, close) : Math.min(previous, close)), close: decimal(close),
       base_volume: decimal(item.baseVolume / 1440), quote_volume: decimal(item.baseVolume * item.price / 1440), trade_count: Math.round(item.trades / 1440),
     });
     previous = close;

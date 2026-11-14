@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   apiBase,
   formatScaled,
@@ -18,8 +18,11 @@ import {
 } from "./marketData";
 import {
   SEED_LABEL,
+  SEED_ORDER_LEVERAGE,
   seedCandles,
   seedDepth,
+  seedMaxLeverage,
+  seedMaxLeverageScaled,
   seedPrice,
   seedTicker,
   seedTrades,
@@ -115,6 +118,14 @@ function validPositive(value: string) {
   );
 }
 
+function marketMaxLeverage(market: Market): number | null {
+  const configured = market.max_leverage
+    ? Number(formatScaled(market.max_leverage).replaceAll(",", ""))
+    : NaN;
+  if (Number.isFinite(configured) && configured >= 1) return Math.floor(configured);
+  return seedMaxLeverage(market.slug);
+}
+
 function BookSide({
   levels,
   side,
@@ -140,8 +151,11 @@ function BookSide({
           <button
             type="button"
             key={`${level.price}-${index}`}
-            disabled={illustrative}
-            onClick={() => onChoosePrice(level.price)}
+            aria-disabled={illustrative}
+            tabIndex={illustrative ? -1 : undefined}
+            onClick={() => {
+              if (!illustrative) onChoosePrice(level.price);
+            }}
             title={
               illustrative
                 ? "Illustrative depth, unavailable for orders"
@@ -346,6 +360,7 @@ function OrderForm({
   currentPrice,
   selectedPrice,
   leverage,
+  maxLeverage,
   onLeverageChange,
   onSignIn,
   onPlaced,
@@ -357,6 +372,7 @@ function OrderForm({
   currentPrice: string | null;
   selectedPrice: string | null;
   leverage: string;
+  maxLeverage: number | null;
   onLeverageChange: (value: string) => void;
   onSignIn: () => void;
   onPlaced: () => void;
@@ -369,6 +385,10 @@ function OrderForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const selectedLeverage = maxLeverage === null
+    ? Math.max(1, Number(leverage) || 1)
+    : Math.min(Math.max(1, Number(leverage) || 1), maxLeverage);
+  const leverageProgress = maxLeverage === null || maxLeverage === 1 ? 0 : (selectedLeverage - 1) / (maxLeverage - 1) * 100;
 
   useEffect(() => {
     if (currentPrice) setPrice((value) => value || currentPrice);
@@ -386,6 +406,9 @@ function OrderForm({
     setError("");
     setSuccess("");
   }, [marketId]);
+  useEffect(() => {
+    if (maxLeverage !== null && Number(leverage) > maxLeverage) onLeverageChange(String(maxLeverage));
+  }, [leverage, maxLeverage, onLeverageChange]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -404,9 +427,15 @@ function OrderForm({
       return;
     }
     if (!validPositive(quantity) || !validPositive(leverage)) {
-      setError(
-        "Enter a positive quantity and leverage with up to 8 decimal places."
-      );
+      setError("Enter a positive quantity and select a valid leverage.");
+      return;
+    }
+    if (maxLeverage === null) {
+      setError("Market leverage limit is unavailable.");
+      return;
+    }
+    if (Number(leverage) > maxLeverage) {
+      setError(`Leverage cannot exceed ${maxLeverage}× for this market.`);
       return;
     }
     const orderPrice = type === "LIMIT" ? price : side === "BUY" ? budget : "0";
@@ -543,18 +572,37 @@ function OrderForm({
           />
           <span>UNITS</span>
         </label>
-        <label>
-          Leverage
+        <div className="trade-order__leverage">
+          <div className="trade-order__leverage-head">
+            <label htmlFor="trade-leverage">Leverage</label>
+            <span><strong>{selectedLeverage}×</strong><span aria-hidden="true"> / </span>{maxLeverage === null ? "limit unavailable" : `${maxLeverage}× max`}</span>
+          </div>
           <input
-            value={leverage}
-            onChange={(event) => onLeverageChange(event.target.value)}
-            inputMode="decimal"
-            placeholder="1"
-            autoComplete="off"
-            required
+            id="trade-leverage"
+            type="range"
+            min="1"
+            max={maxLeverage ?? 1}
+            step="1"
+            value={maxLeverage === null ? 1 : selectedLeverage}
+            disabled={maxLeverage === null}
+            onChange={(event) => onLeverageChange(event.currentTarget.value)}
+            style={{ "--leverage-progress": `${leverageProgress}%` } as CSSProperties}
           />
-          <span>×</span>
-        </label>
+          <div className="trade-order__leverage-presets" role="group" aria-label="Leverage presets">
+            {[5, 10, 20, 50].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={Number(leverage) === preset ? "is-active" : ""}
+                aria-pressed={Number(leverage) === preset}
+                disabled={maxLeverage === null || preset > maxLeverage}
+                onClick={() => onLeverageChange(String(preset))}
+              >
+                {preset}×
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="trade-order__estimate">
           <div>
             <span>Order value</span>
@@ -732,13 +780,6 @@ function AccountPanel({
 
   return (
     <section className="trade-account" aria-label="Your market activity">
-      <div className="trade-account__title">
-        <div>
-          <span className="trade-panel__eyebrow">PORTFOLIO</span>
-          <h2>Your activity</h2>
-        </div>
-        <span>THIS MARKET</span>
-      </div>
       <div className="trade-account__header">
         <div
           className="trade-account__tabs"
@@ -1066,50 +1107,6 @@ function AccountPanel({
                   ? fundingPayments.length
                   : orders.length}
             </span>
-            <div>
-              <button
-                type="button"
-                onClick={() => setPage(Math.max(0, page - 1))}
-                disabled={page === 0}
-                aria-label="Previous records"
-              >
-                ←
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setPage(
-                    Math.min(
-                      Math.max(
-                        0,
-                        Math.ceil(
-                          (tab === "liquidations"
-                            ? liquidations.length
-                            : tab === "funding"
-                              ? fundingPayments.length
-                              : orders.length) / pageSize
-                        ) - 1
-                      ),
-                      page + 1
-                    )
-                  )
-                }
-                disabled={
-                  page >=
-                  Math.ceil(
-                    (tab === "liquidations"
-                      ? liquidations.length
-                      : tab === "funding"
-                        ? fundingPayments.length
-                        : orders.length) / pageSize
-                  ) -
-                    1
-                }
-                aria-label="Next records"
-              >
-                →
-              </button>
-            </div>
           </div>
         )}
     </section>
@@ -1122,7 +1119,7 @@ export function MarketTradePage({
   balance,
   accountEventRevision,
   onSignIn,
-  onMarkets,
+  onSelectMarket,
   onMarketLabelChange,
   onBalanceRefresh,
 }: {
@@ -1131,11 +1128,12 @@ export function MarketTradePage({
   balance: Balance | null;
   accountEventRevision: number;
   onSignIn: () => void;
-  onMarkets: () => void;
+  onSelectMarket: (marketId: string) => void;
   onMarketLabelChange: (label: string | null) => void;
   onBalanceRefresh: () => void;
 }) {
   const [market, setMarket] = useState<Market | null>(null);
+  const [availableMarkets, setAvailableMarkets] = useState<Market[]>([]);
   const [preview, setPreview] = useState(false);
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState("");
@@ -1159,7 +1157,7 @@ export function MarketTradePage({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [chosenPrice, setChosenPrice] = useState<string | null>(null);
-  const [leverage, setLeverage] = useState("1");
+  const [leverage, setLeverage] = useState(String(SEED_ORDER_LEVERAGE));
   const [accountRefresh, setAccountRefresh] = useState(0);
   const [positionSummary, setPositionSummary] = useState<Position | null>(null);
   const bookUpdateVersion = useRef(0);
@@ -1168,6 +1166,22 @@ export function MarketTradePage({
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api<{ markets: Market[] }>("/market", { signal: controller.signal })
+      .then(({ markets }) => {
+        if (!controller.signal.aborted) setAvailableMarkets(markets);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!previewPairs.includes(marketId)) return;
+    const listedMarket = availableMarkets.find((item) => item.slug === marketId);
+    if (listedMarket) onSelectMarket(listedMarket.market_id);
+  }, [availableMarkets, marketId, onSelectMarket]);
 
   useEffect(() => {
     if (!token || !market || preview) {
@@ -1200,6 +1214,7 @@ export function MarketTradePage({
     setHistoryError("");
     setLastPrice(null);
     setChosenPrice(null);
+    setLeverage(String(SEED_ORDER_LEVERAGE));
     setMarkExpiresAt(null);
     setLiveMarkPrice(null);
     setFunding(null);
@@ -1213,6 +1228,7 @@ export function MarketTradePage({
         imageUrl: "",
         mark_price: null,
         last_traded_price: null,
+        max_leverage: seedMaxLeverageScaled(marketId),
       });
       onMarketLabelChange(marketId.replaceAll("-", " / "));
       setPreview(true);
@@ -1532,6 +1548,20 @@ export function MarketTradePage({
   const displayMark =
     markPrice ?? (referencePrice === null ? null : String(referencePrice));
   const referenceTicker = market ? seedTicker(market.slug) : null;
+  const maxLeverage = market ? marketMaxLeverage(market) : null;
+  const marketOptions: Market[] = availableMarkets.length
+    ? [...availableMarkets]
+    : previewPairs.map((slug) => ({
+        market_id: slug,
+        slug,
+        imageUrl: "",
+        mark_price: null,
+        last_traded_price: null,
+        max_leverage: seedMaxLeverageScaled(slug),
+      }));
+  if (market && !marketOptions.some((item) => item.market_id === market.market_id || item.slug === market.slug)) {
+    marketOptions.push(market);
+  }
   const illustrativeChart = candles.length === 0;
   const illustrativeDepth =
     Boolean(market) && !depth?.asks.length && !depth?.bids.length;
@@ -1557,7 +1587,7 @@ export function MarketTradePage({
         MATIC: "#8c50e8",
         UNI: "#da2fab",
       } as Record<string, string>
-    )[label.base] ?? "#c3b6ec";
+    )[label.base] ?? "#0BDA51";
   const markFresh =
     feed === "connected" && markExpiresAt !== null && markExpiresAt >= now;
   const feedMessage = preview
@@ -1685,6 +1715,13 @@ export function MarketTradePage({
                 (marketLoading ? "Loading market…" : "Market unavailable")
               }
               marketIcon={icon}
+              marketId={marketId}
+              markets={marketOptions.map((item) => ({
+                market_id: item.market_id,
+                slug: item.slug,
+                maxLeverage: marketMaxLeverage(item),
+                icon: icons[partsOf(item.slug).base],
+              }))}
               leverage={validPositive(leverage) ? leverage : "—"}
               accentColor={assetAccent}
               lastPrice={displayPrice}
@@ -1708,7 +1745,7 @@ export function MarketTradePage({
               funding={funding}
               now={now}
               illustrative={illustrativeChart}
-              onMarkets={onMarkets}
+              onSelectMarket={onSelectMarket}
             />
             <OrderBook
               depth={displayDepth}
@@ -1730,6 +1767,7 @@ export function MarketTradePage({
               currentPrice={current}
               selectedPrice={chosenPrice}
               leverage={leverage}
+              maxLeverage={maxLeverage}
               onLeverageChange={setLeverage}
               onSignIn={onSignIn}
               onPlaced={() => {

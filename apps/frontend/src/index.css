@@ -202,6 +202,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid #63c893; outline-
 .trade-book__side--bid { justify-content: flex-start; }
 .trade-book__side button { width: 100%; height: 24px; flex: 0 0 24px; position: relative; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border: 0; background: transparent; color: #aab6bc; font: 650 11px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: left; }
 .trade-book__side button:hover { background: #242930; }
+.trade-book__side button[aria-disabled="true"] { cursor: default; }
+.trade-book__side button[aria-disabled="true"]:hover { background: transparent; }
 .trade-book__side button > span:not(.trade-book__bar) { position: relative; z-index: 1; }
 .trade-book__side--ask .trade-book__price { color: #e07882; }
 .trade-book__side--bid .trade-book__price { color: #66c98d; }
