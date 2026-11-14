@@ -17,6 +17,24 @@ export const SUPPORTED_MARKET_SLUGS = [
   "XRP-USDT",
 ] as const;
 
+// Demo exchange risk limits. These are seeded into Market and enforced by Engine.
+export const MARKET_MAX_LEVERAGE: Record<(typeof SUPPORTED_MARKET_SLUGS)[number], number> = {
+  "ADA-USDT": 20,
+  "AVAX-USDT": 20,
+  "BCH-USDT": 20,
+  "BTC-USDT": 50,
+  "DOGE-USDT": 20,
+  "ETH-USDT": 50,
+  "FIL-USDT": 10,
+  "LINK-USDT": 20,
+  "LTC-USDT": 20,
+  "OP-USDT": 10,
+  "SOL-USDT": 30,
+  "UNI-USDT": 15,
+  "USDC-USDT": 10,
+  "XRP-USDT": 20,
+};
+
 const supportedMarkets = new Set<string>(SUPPORTED_MARKET_SLUGS);
 
 export const isSupportedMarketSlug = (slug: string): boolean =>

@@ -29,6 +29,7 @@ export type MarketRiskConfig = {
 export type MarketDefinition = {
   market_id: string;
   slug: string;
+  max_leverage: bigint | null;
 };
 
 /** Live state owned by one market. Account balances and command queues live in Engine. */

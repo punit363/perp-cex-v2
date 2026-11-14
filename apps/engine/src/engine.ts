@@ -39,7 +39,7 @@ import {
   calculateNotional,
 } from "./math/financial-math";
 import type { EngineResponse } from "commons/src/index";
-import { isSupportedMarketSlug } from "commons/src/supported-markets";
+import { isSupportedMarketSlug, MARKET_MAX_LEVERAGE } from "commons/src/supported-markets";
 import type { DBEventInput } from "commons/src/engine-event";
 import {
   OrderSide,
@@ -107,6 +107,9 @@ class Engine {
         slug.split("-").at(-1) ?? "",
       ])
     );
+    const seededLeverageLimits = new Map(
+      markets.map(({ market_id, max_leverage }) => [market_id, max_leverage])
+    );
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
     this.LIQUIDATION_FEE_RATE = MARKET_CONFIG.LIQUIDATION_FEE_RATE;
@@ -153,7 +156,7 @@ class Engine {
               : this.LIQUIDATION_FEE_RATE,
             maxLeverage: saved?.max_leverage
               ? BigInt(saved.max_leverage)
-              : null,
+              : seededLeverageLimits.get(market_data.market_id) ?? null,
             maxLiquidationQuantity: saved?.max_liquidation_quantity
               ? BigInt(saved.max_liquidation_quantity)
               : null,
@@ -222,7 +225,7 @@ class Engine {
 
       this.markets.set(
         market_id,
-        this.createMarketContext(market_id, quotes.get(market_id) ?? "")
+        this.createMarketContext(market_id, quotes.get(market_id) ?? "", market.max_leverage)
       );
     }
 
@@ -296,7 +299,8 @@ class Engine {
 
   private createMarketContext = (
     market_id: string,
-    quote: string
+    quote: string,
+    maxLeverage: bigint | null
   ): MarketContext => ({
     book: new Orderbook(
       {
@@ -311,7 +315,7 @@ class Engine {
     risk: this.validateRiskConfig({
       maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
       liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
-      maxLeverage: null,
+      maxLeverage,
       maxLiquidationQuantity: null,
     }),
     funding: this.emptyFundingState(),
@@ -840,7 +844,15 @@ class Engine {
       if (isSupportedMarketSlug(slug)) this.tradableMarketIds.add(market_id);
       return engine_response("Market already registered", 1, { market_id });
     }
-    this.markets.set(market_id, this.createMarketContext(market_id, quote));
+    const maxLeverage = MARKET_MAX_LEVERAGE[slug as keyof typeof MARKET_MAX_LEVERAGE];
+    this.markets.set(
+      market_id,
+      this.createMarketContext(
+        market_id,
+        quote,
+        maxLeverage ? BigInt(maxLeverage) * FIXED_POINT_CONSTANTS.SCALE : null
+      )
+    );
     if (isSupportedMarketSlug(slug)) this.tradableMarketIds.add(market_id);
     return engine_response("Market registered", 1, { market_id });
   };
