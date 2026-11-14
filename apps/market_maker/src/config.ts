@@ -37,7 +37,7 @@ export function readConfig() {
   }
   const password = process.env.MM_PASSWORD;
   if (!password || password.length < 12) throw new Error("Set MM_PASSWORD to at least 12 characters");
-  const prefix = process.env.MM_USERNAME_PREFIX || "demo-mm";
+  const prefix = process.env.MM_USERNAME_PREFIX || "demo-m";
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,24}$/.test(prefix)) {
     throw new Error("MM_USERNAME_PREFIX must be 3–25 letters, digits, underscores or hyphens, starting with a letter");
   }
@@ -59,11 +59,11 @@ export function readConfig() {
     makers: integer("MM_MAKERS", 3, 1, 12),
     takers: integer("MM_TAKERS", 1, 1, 4),
     layers: integer("MM_LAYERS", 2, 1, 5),
-    halfSpreadBps: integer("MM_HALF_SPREAD_BPS", 15, 1, 1000),
-    layerStepBps: integer("MM_LAYER_STEP_BPS", 10, 1, 1000),
+    halfSpreadBps: integer("MM_HALF_SPREAD_BPS", 2, 1, 1000),
+    layerStepBps: integer("MM_LAYER_STEP_BPS", 4, 1, 1000),
     repriceBps: integer("MM_REPRICE_BPS", 5, 0, 1000),
-    tickMs: integer("MM_TICK_MS", 4000, 1000, 60_000),
-    quoteTtlMs: integer("MM_QUOTE_TTL_MS", 30_000, 5000, 600_000),
+    tickMs: integer("MM_TICK_MS", 1_000, 1_000, 60_000),
+    quoteTtlMs: integer("MM_QUOTE_TTL_MS", 5_000, 5000, 600_000),
     tradeEveryTicks: integer("MM_TRADE_EVERY_TICKS", 3, 0, 1000),
     orderQuantity,
     tradeQuantity,

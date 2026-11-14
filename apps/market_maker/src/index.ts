@@ -23,9 +23,13 @@ type Quote = {
   price: bigint;
   reference: bigint;
   placedAt: number;
+  remaining: bigint;
 };
 const active = new Map<string, Quote>();
 const tradeCount = new Map<string, number>();
+// Mark price the current ladder was built from, per market. Refilled slots reuse
+// it so they stay on the same price grid instead of drifting with the live mark.
+const ladderMid = new Map<string, bigint>();
 let stopping = false;
 let wake: (() => void) | undefined;
 
@@ -201,6 +205,8 @@ async function quoteMarket(market: Market): Promise<number> {
       movedBps(quote.reference, mid) >= BigInt(config.repriceBps)
   );
   if (refresh) await cancelMarket(marketId);
+  if (refresh || oldQuotes.length === 0) ladderMid.set(marketId, mid);
+  const ref = ladderMid.get(marketId) ?? mid;
 
   // The depth check reduces accidental taking. The exchange does not yet have
   // a post-only flag, so another order can still arrive between this read and placement.
@@ -216,7 +222,7 @@ async function quoteMarket(market: Market): Promise<number> {
         if (active.has(key)) continue;
         const offset =
           config.halfSpreadBps + layer * config.layerStepBps + makerIndex;
-        let price = quotePrice(mid, side, offset);
+        let price = quotePrice(ref, side, offset);
         if (side === "BUY" && bestAsk !== null && price >= bestAsk)
           price = bestAsk - 1n;
         if (side === "SELL" && bestBid !== null && price <= bestBid)
@@ -238,8 +244,9 @@ async function quoteMarket(market: Market): Promise<number> {
               orderId: order.order_id,
               side,
               price,
-              reference: mid,
+              reference: ref,
               placedAt: Date.now(),
+              remaining: parseFixed(config.orderQuantity),
             });
           }
           placed++;
@@ -283,6 +290,23 @@ async function makeTrade(market: Market): Promise<void> {
   }
   if (order.filled && parseFixed(order.filled) > 0n) {
     tradeCount.set(market.market_id, count + 1);
+
+    // Update the maker quote that was just hit, so a fully filled slot is
+    // dropped from `active` and re-placed on the next cycle.
+    const filled = parseFixed(order.filled);
+    const hit = parseFixed(opposite.price);
+    for (const q of active.values()) {
+      if (
+        q.marketId === market.market_id &&
+        q.side !== side &&
+        q.price === hit
+      ) {
+        q.remaining -= filled;
+        if (q.remaining <= 0n) active.delete(q.key);
+        break;
+      }
+    }
+
     console.log(
       `${market.slug}: ${taker.username} ${side} filled ${order.filled} at ${opposite.price}`
     );
