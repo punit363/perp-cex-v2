@@ -61,8 +61,8 @@ type Position = {
 type Liquidation = {
   liquidation_id: string;
   status: "LIQUIDATING" | "COMPLETED" | "BANKRUPT";
+  initial_quantity: string;
   total_filled: string;
-  remaining_quantity: string;
   total_liquidation_fee: string;
   total_user_refund: string;
   total_shortfall_covered: string;
@@ -940,7 +940,7 @@ function AccountPanel({
                   <th>TIME</th>
                   <th>STATUS</th>
                   <th>FILLED</th>
-                  <th>REMAINING</th>
+                  <th>QUANTITY</th>
                   <th>FEE</th>
                   <th>REFUND</th>
                   <th>INSURANCE / DEFICIT</th>
@@ -960,7 +960,7 @@ function AccountPanel({
                         {item.status}
                       </td>
                       <td>{grouped(item.total_filled)}</td>
-                      <td>{grouped(item.remaining_quantity)}</td>
+                      <td>{grouped(item.initial_quantity)}</td>
                       <td>{grouped(item.total_liquidation_fee)}</td>
                       <td>{grouped(item.total_user_refund)}</td>
                       <td>
