@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "REDIS_URL=redis://localhost:6379/1 ENGINE_SNAPSHOT_PATH=../../.turbo/apex-turbo-snapshot.json turbo run dev",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types"

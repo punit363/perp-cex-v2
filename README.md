@@ -68,7 +68,35 @@ Use `docker compose` in place of `docker-compose` if that is your installed comm
 
 ## Development
 
-The repository uses Bun workspaces. Install dependencies with `bun install`. You can run individual services from their directories with `bun src/index.ts`, but they require the corresponding PostgreSQL, Redis, environment variables, and seeded markets. The frontend can run separately on a chosen port:
+The repository uses Bun workspaces and Turbo. Install dependencies with `bun install`, copy `.env.example` to `.env`, and set `DATABASE_URL` to use `localhost` when running services outside Docker. The workspace dev scripts explicitly load the root `.env`, so you can start the local services together with:
+
+```sh
+bun install
+bun run dev
+```
+
+This starts the frontend on `http://localhost:3000`, the API on `http://localhost:8000`, and the WebSocket service on `ws://localhost:7001`. PostgreSQL and Redis must already be running, and the database must be migrated and seeded:
+
+Stop the Docker stack first if it is running; its published API and WebSocket ports conflict with the Turbo services:
+
+```sh
+docker compose down
+```
+
+```sh
+cd packages/db
+bunx prisma migrate deploy --config prisma7.config.ts
+bun run seed:markets
+cd ../..
+```
+
+To start only one workspace, use Turbo filters. For example:
+
+```sh
+bunx turbo run dev --filter=./apps/frontend
+```
+
+You can also run individual services from their directories with `bun src/index.ts` when their environment is available. The frontend can run separately on a chosen port:
 
 ```sh
 cd apps/frontend

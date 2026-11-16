@@ -8,6 +8,9 @@
   },
   "scripts": {
     "typecheck": "bun check",
+    "db:migrate": "bun --env-file=../../.env ./node_modules/prisma/build/index.js migrate deploy --config prisma7.config.ts",
+    "db:seed": "bun --env-file=../../.env seed-markets.ts",
+    "db:update": "bun run db:migrate && bun run db:seed",
     "seed:markets": "bun seed-markets.ts",
     "postinstall": "prisma skills sync || exit 0"
   },
