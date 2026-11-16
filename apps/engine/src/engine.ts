@@ -57,7 +57,8 @@ import {
   calculateLiquidationPrice,
   calculatePositionRisk,
 } from "./liquidation";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import RUNTIME_CONFIG from "./config/runtime.config";
 import { randomUUID } from "node:crypto";
 import {
@@ -88,6 +89,7 @@ class Engine {
   private currentSourceMessageId: string | null = null;
   private awaitingEventPublication = false; //block snapshot if pending publication to ws or db
   private snapshotTimer?: ReturnType<typeof setInterval>;
+  private onSnapshotSaved?: (streamId: string) => void;
   private commandEvents: {
     db: DBEventDraft[];
     ws: WSEventDraft[];
@@ -354,6 +356,10 @@ class Engine {
     return this.lastAppliedStreamId;
   };
 
+  setSnapshotSavedHandler = (handler: (streamId: string) => void): void => {
+    this.onSnapshotSaved = handler;
+  };
+
   //check for active liquidation in all markets
   hasActiveLiquidations = (): boolean => {
     for (const market of this.markets.values()) {
@@ -472,14 +478,28 @@ class Engine {
       });
 
       const temporaryPath = `${RUNTIME_CONFIG.snapshotPath}.${process.pid}.tmp`;
-      writeFileSync(temporaryPath, JSON.stringify(snapshot));
+      const snapshotFile = openSync(temporaryPath, "w");
+      try {
+        writeFileSync(snapshotFile, JSON.stringify(snapshot));
+        fsyncSync(snapshotFile);
+      } finally {
+        closeSync(snapshotFile);
+      }
       renameSync(temporaryPath, RUNTIME_CONFIG.snapshotPath);
+      const snapshotDirectory = openSync(dirname(RUNTIME_CONFIG.snapshotPath), "r");
+      try {
+        fsyncSync(snapshotDirectory);
+      } finally {
+        closeSync(snapshotDirectory);
+      }
+      this.onSnapshotSaved?.(snapshot.last_applied_stream_id);
     }, ENGINE_CONSTANTS.SNAPSHOT_INTERVAL_MS);
   };
 
   stopSnapshot = () => {
     if (this.snapshotTimer) clearInterval(this.snapshotTimer);
     this.snapshotTimer = undefined;
+    this.onSnapshotSaved = undefined;
   };
 
   processEngineOrder = (
