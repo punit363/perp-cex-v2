@@ -26,6 +26,8 @@ class RedisHandler {
   private client: RedisClientType;
   private publisher: RedisClientType;
   private eventGroupsInitialized = false;
+  private cleanupInProgress = false;
+  private lastCleanupAt = 0;
 
   constructor() {
     this.publisher = createClient({ url: RUNTIME_CONFIG.redisUrl });
@@ -67,6 +69,69 @@ class RedisHandler {
       }
     }
     this.eventGroupsInitialized = true;
+  };
+
+  private trimAcknowledgedStream = async (
+    stream: string,
+    expectedGroups: readonly string[]
+  ): Promise<void> => {
+    if (!(await this.publisher.exists(stream))) return;
+    const groups = await this.publisher.xInfoGroups(stream);
+    if (!expectedGroups.every((name) => groups.some((group) => group.name === name)))
+      return;
+
+    let oldestNeededId: string | null = null;
+    for (const group of groups) {
+      let neededId = group["last-delivered-id"];
+      if (group.pending > 0) {
+        const pending = await this.publisher.xPending(stream, group.name);
+        if (!pending.firstId) return;
+        neededId = pending.firstId;
+      }
+      if (neededId === REDIS_CONSTANTS.INITIAL_STREAM_ID) return;
+      if (oldestNeededId === null || compareStreamIds(neededId, oldestNeededId) < 0)
+        oldestNeededId = neededId;
+    }
+
+    if (oldestNeededId !== null)
+      await this.publisher.xTrim(stream, "MINID", oldestNeededId, {
+        strategyModifier: "~",
+        LIMIT: 100_000,
+      });
+  };
+
+  public trimProcessedStreams = async (snapshotCursor: string): Promise<void> => {
+    if (
+      snapshotCursor === REDIS_CONSTANTS.INITIAL_STREAM_ID ||
+      this.cleanupInProgress ||
+      Date.now() - this.lastCleanupAt < 10_000
+    ) return;
+
+    this.cleanupInProgress = true;
+    try {
+      // The snapshot contains every command through this ID. Keep the cursor
+      // itself so recovery can still verify and read the stream after it.
+      await this.publisher.xTrim(REDIS_CONSTANTS.REQUEST_STREAM, "MINID", snapshotCursor, {
+        strategyModifier: "~",
+        LIMIT: 100_000,
+      });
+      await this.trimAcknowledgedStream(
+        REDIS_CONSTANTS.EVENT_STREAM,
+        REDIS_CONSTANTS.EVENT_GROUPS
+      );
+      await this.trimAcknowledgedStream("private-events", ["private-websocket"]);
+      // Backend loopback responses expire after ten seconds and are never
+      // replayed on restart. Retain a full minute for in-flight readers.
+      await this.publisher.xTrim(
+        REDIS_CONSTANTS.RESPONSE_STREAM,
+        "MINID",
+        `${Date.now() - 60_000}-0`,
+        { strategyModifier: "~", LIMIT: 100_000 }
+      );
+      this.lastCleanupAt = Date.now();
+    } finally {
+      this.cleanupInProgress = false;
+    }
   };
 
   //stream engine events for ws and database
