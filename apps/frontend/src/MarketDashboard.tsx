@@ -478,7 +478,7 @@ export function MarketDashboard({
     return [market.market_id, recorded.points.length ? recorded : seedStats(market.slug, days)];
   }));
   const showingReferences = all.some((market) => !statsFor(candles[market.market_id] ?? [], days).points.length);
-  const featured: ViewMarket[] = ["BTC", "ETH", "SOL", "AVAX", "DOGE"]
+  const featured: ViewMarket[] = ["BTC", "BCH", "SOL", "AVAX", "DOGE"]
     .map(
       (base) =>
         all.find((market) => market.base === base && market.quote === "USDT") ??

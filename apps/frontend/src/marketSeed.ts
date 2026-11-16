@@ -21,7 +21,6 @@ const references: Record<string, SpotReference> = {
   "BCH-USDT": { price: 225.72, open: 228.63, high: 233.96, low: 223.07, baseVolume: 3694, trades: 2074 },
   "BTC-USDT": { price: 71666.4, open: 73928.5, high: 74754.1, low: 71133.4, baseVolume: 3394, trades: 172938 },
   "DOGE-USDT": { price: 0.0656513, open: 0.0674038, high: 0.0695012, low: 0.0644802, baseVolume: 62627856, trades: 8713 },
-  "ETH-USDT": { price: 2004.2, open: 2053.71, high: 2105.22, low: 1981.12, baseVolume: 31546, trades: 58782 },
   "FIL-USDT": { price: 0.74, open: 0.751, high: 0.781, low: 0.729, baseVolume: 376597, trades: 1181 },
   "LINK-USDT": { price: 9.97348, open: 10.1803, high: 10.57724, low: 9.7626, baseVolume: 398746, trades: 8554 },
   "LTC-USDT": { price: 49.26, open: 50.19, high: 51.61, low: 48.36, baseVolume: 60696, trades: 10759 },
@@ -46,7 +45,6 @@ export const SEED_ORDER_LEVERAGE = 8;
 // market fell in its first session. Recorded exchange candles always replace it.
 const illustrativeGains: Record<string, number> = {
   "BTC-USDT": 0.004,
-  "ETH-USDT": 0.007,
   "SOL-USDT": 0.008,
   "XRP-USDT": 0.005,
   "DOGE-USDT": 0.012,
