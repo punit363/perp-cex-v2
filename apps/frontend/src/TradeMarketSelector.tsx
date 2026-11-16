@@ -7,14 +7,14 @@ type MenuPosition = { top: number; left: number; width: number; maxHeight: numbe
 export function TradeMarketSelector({
   marketLabel,
   marketIcon,
-  leverage,
+  maxLeverage,
   markets,
   marketId,
   onSelectMarket,
 }: {
   marketLabel: string;
   marketIcon?: string;
-  leverage: string;
+  maxLeverage: number | null;
   markets: Market[];
   marketId: string;
   onSelectMarket: (marketId: string) => void;
@@ -108,8 +108,8 @@ export function TradeMarketSelector({
           <i aria-hidden="true">T</i>
         </span>
         <span>{marketLabel}</span>
-        <span className="trade-chart__pair-leverage" title="Selected order leverage">
-          {leverage}×
+        <span className="trade-chart__pair-leverage" title="Maximum market leverage">
+          {maxLeverage === null ? "—" : `${maxLeverage}×`}
         </span>
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="m3 6 5 5 5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />

@@ -55,7 +55,7 @@ export function MarketCandlestickChart({
   error,
   marketLabel,
   marketIcon,
-  leverage,
+  maxLeverage,
   accentColor,
   lastPrice,
   headlineLabel,
@@ -80,7 +80,7 @@ export function MarketCandlestickChart({
   error: string;
   marketLabel: string;
   marketIcon?: string;
-  leverage: string;
+  maxLeverage: number | null;
   accentColor: string;
   lastPrice: string | null;
   headlineLabel: string;
@@ -261,7 +261,7 @@ export function MarketCandlestickChart({
           <TradeMarketSelector
             marketLabel={marketLabel}
             marketIcon={marketIcon}
-            leverage={leverage}
+            maxLeverage={maxLeverage}
             markets={markets}
             marketId={marketId}
             onSelectMarket={onSelectMarket}
