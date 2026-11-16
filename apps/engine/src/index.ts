@@ -11,11 +11,6 @@ while (true) {
     engine = await Engine.create();
     redis = new RedisHandler();
     await redis.connect();
-    engine.setSnapshotSavedHandler((streamId) => {
-      void redis!.trimProcessedStreams(streamId).catch((error) => {
-        console.error("Redis stream cleanup failed:", error);
-      });
-    });
     console.info("Engine connected; recovering request stream");
     //start reading engine request stream
     await redis.readEngineRequestStream(

@@ -185,22 +185,8 @@ Bun.serve<SocketData>({
 });
 
 //stream requested public data to saved connections whenever engine stream has new message
-const retryRedisReader = async (
-  read: () => Promise<void>,
-  name: string
-): Promise<void> => {
-  while (true) {
-    try {
-      await read();
-      throw new Error(`${name} reader stopped unexpectedly`);
-    } catch (error) {
-      console.error(`${name} Redis event reader stopped:`, error);
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-    }
-  }
-};
-
-void retryRedisReader(() => redis.readEvents(async (event) => {
+void redis
+  .readEvents(async (event) => {
     const key = subscriptionKey(event.event_type, event.data.market_id);
     const payload = JSON.stringify({
       event_type: event.event_type,
@@ -216,10 +202,14 @@ void retryRedisReader(() => redis.readEvents(async (event) => {
         subscriptions.delete(ws);
       }
     }
-  }), "Public");
+  })
+  .catch((error) => {
+    console.error("Redis event reader stopped:", error);
+  });
 
 //stream requested user data to saved connections whenever engine stream has new message
-void retryRedisReader(() => redis.readPrivateEvents(async (event) => {
+void redis
+  .readPrivateEvents(async (event) => {
     const payload = JSON.stringify(event);
     for (const [ws, topics] of subscriptions) {
       if (ws.data.user_id !== event.user_id || !topics.has("ACCOUNT")) continue;
@@ -230,4 +220,7 @@ void retryRedisReader(() => redis.readPrivateEvents(async (event) => {
         subscriptions.delete(ws);
       }
     }
-  }), "Private");
+  })
+  .catch((error) => {
+    console.error("Private Redis event reader stopped:", error);
+  });

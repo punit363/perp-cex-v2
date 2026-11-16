@@ -63,18 +63,14 @@ class RedisHandler {
     await this.connect();
     await this.createGroup();
 
-    let drainingPending = true;
     while (true) {
       const streams = await this.client.xReadGroup(
         GROUP,
         CONSUMER,
-        [{ key: STREAM, id: drainingPending ? "0" : ">" }],
-        drainingPending ? { COUNT: 1 } : { BLOCK: 0, COUNT: 1 }
+        [{ key: STREAM, id: ">" }],
+        { BLOCK: 0, COUNT: 1 }
       );
-      if (!streams?.some((stream) => stream.messages.length)) {
-        if (drainingPending) drainingPending = false;
-        continue;
-      }
+      if (!streams) continue;
 
       for (const stream of streams) {
         for (const message of stream.messages) {
@@ -110,18 +106,14 @@ class RedisHandler {
     await this.connect();
     await this.createPrivateGroup();
 
-    let drainingPending = true;
     while (true) {
       const streams = await this.privateClient.xReadGroup(
         PRIVATE_GROUP,
         PRIVATE_CONSUMER,
-        [{ key: PRIVATE_STREAM, id: drainingPending ? "0" : ">" }],
-        drainingPending ? { COUNT: 1 } : { BLOCK: 0, COUNT: 1 }
+        [{ key: PRIVATE_STREAM, id: ">" }],
+        { BLOCK: 0, COUNT: 1 }
       );
-      if (!streams?.some((stream) => stream.messages.length)) {
-        if (drainingPending) drainingPending = false;
-        continue;
-      }
+      if (!streams) continue;
 
       for (const stream of streams) {
         for (const message of stream.messages) {
