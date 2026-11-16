@@ -62,7 +62,7 @@ export function readConfig() {
     halfSpreadBps: integer("MM_HALF_SPREAD_BPS", 2, 1, 1000),
     layerStepBps: integer("MM_LAYER_STEP_BPS", 4, 1, 1000),
     repriceBps: integer("MM_REPRICE_BPS", 5, 0, 1000),
-    tickMs: integer("MM_TICK_MS", 1_000, 1_000, 60_000),
+    tickMs: integer("MM_TICK_MS", 100, 100, 60_000),
     quoteTtlMs: integer("MM_QUOTE_TTL_MS", 5_000, 5000, 600_000),
     tradeEveryTicks: integer("MM_TRADE_EVERY_TICKS", 3, 0, 1000),
     orderQuantity,
