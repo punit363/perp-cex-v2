@@ -60,7 +60,7 @@ type Position = {
 };
 type Liquidation = {
   liquidation_id: string;
-  status: "LIQUIDATING" | "COMPLETED" | "BANKRUPT";
+  status: "LIQUIDATING" | "COMPLETED" | "BANKRUPT" | "RECOVERED";
   initial_quantity: string;
   total_filled: string;
   total_liquidation_fee: string;
@@ -381,7 +381,6 @@ function OrderForm({
   const [type, setType] = useState<"LIMIT" | "MARKET">("LIMIT");
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [budget, setBudget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -402,7 +401,6 @@ function OrderForm({
   useEffect(() => {
     setPrice("");
     setQuantity("");
-    setBudget("");
     setError("");
     setSuccess("");
   }, [marketId]);
@@ -438,13 +436,9 @@ function OrderForm({
       setError(`Leverage cannot exceed ${maxLeverage}× for this market.`);
       return;
     }
-    const orderPrice = type === "LIMIT" ? price : side === "BUY" ? budget : "0";
-    if ((type === "LIMIT" || side === "BUY") && !validPositive(orderPrice)) {
-      setError(
-        type === "LIMIT"
-          ? "Enter a valid limit price."
-          : "Enter a valid maximum spend."
-      );
+    const orderPrice = type === "LIMIT" ? price : "0";
+    if (type === "LIMIT" && !validPositive(orderPrice)) {
+      setError("Enter a valid limit price.");
       return;
     }
     setBusy(true);
@@ -463,7 +457,6 @@ function OrderForm({
       });
       setSuccess("Order submitted to the matching engine.");
       setQuantity("");
-      setBudget("");
       onPlaced();
     } catch (cause) {
       setError(
@@ -546,20 +539,6 @@ function OrderForm({
             <span>PRICE</span>
           </label>
         )}
-        {type === "MARKET" && side === "BUY" && (
-          <label>
-            Maximum spend
-            <input
-              value={budget}
-              onChange={(event) => setBudget(event.target.value)}
-              inputMode="decimal"
-              placeholder="0.00"
-              autoComplete="off"
-              required
-            />
-            <span>BUDGET</span>
-          </label>
-        )}
         <label>
           Quantity
           <input
@@ -626,7 +605,7 @@ function OrderForm({
         {type === "MARKET" && (
           <p className="trade-order__hint">
             {side === "BUY"
-              ? "The engine spends up to your maximum amount across available asks."
+              ? "The engine buys your requested quantity across available asks, up to what your available balance supports."
               : "The engine matches your quantity against available bids."}
           </p>
         )}
@@ -680,6 +659,7 @@ function AccountPanel({
   refreshKey,
   onSignIn,
   onChanged,
+  onPositionRefreshed,
 }: {
   marketId: string;
   listed: boolean;
@@ -687,6 +667,7 @@ function AccountPanel({
   refreshKey: number;
   onSignIn: () => void;
   onChanged: () => void;
+  onPositionRefreshed: (position: Position | null) => void;
 }) {
   const pageSize = 3;
   const [tab, setTab] = useState<AccountTab>("positions");
@@ -732,8 +713,11 @@ function AccountPanel({
       payments?: FundingPayment[];
     }>(path, { headers: { token }, signal: controller.signal })
       .then((data) => {
-        if (tab === "positions")
-          setPosition(data.engine_response?.data ?? null);
+        if (tab === "positions") {
+          const nextPosition = data.engine_response?.data ?? null;
+          setPosition(nextPosition);
+          onPositionRefreshed(nextPosition);
+        }
         else if (tab === "liquidations")
           setLiquidations(data.liquidations ?? []);
         else if (tab === "funding") setFundingPayments(data.payments ?? []);
@@ -954,7 +938,9 @@ function AccountPanel({
                       <td>{new Date(item.created_at).toLocaleString()}</td>
                       <td
                         className={
-                          item.status === "COMPLETED" ? "is-buy" : "is-sell"
+                          item.status === "COMPLETED" || item.status === "RECOVERED"
+                            ? "is-buy"
+                            : "is-sell"
                         }
                       >
                         {item.status}
@@ -1535,6 +1521,12 @@ export function MarketTradePage({
   const listed = Boolean(market && !preview);
   const ticker = tickerFromTrades(trades, Date.now());
   const current = trades.at(-1)?.price ?? lastPrice;
+  // The order book center row is explicitly the last traded price. Keep it
+  // separate from the mark price, which is used for risk and valuation.
+  const marketLastTradedPrice = market?.last_traded_price
+    ? formatScaled(market.last_traded_price).replaceAll(",", "")
+    : null;
+  const lastTradedPrice = current ?? marketLastTradedPrice;
   const markPrice =
     liveMarkPrice ??
     (market?.mark_price
@@ -1722,7 +1714,7 @@ export function MarketTradePage({
                 maxLeverage: marketMaxLeverage(item),
                 icon: icons[partsOf(item.slug).base],
               }))}
-              leverage={validPositive(leverage) ? leverage : "—"}
+              maxLeverage={maxLeverage}
               accentColor={assetAccent}
               lastPrice={displayPrice}
               headlineLabel={
@@ -1751,7 +1743,7 @@ export function MarketTradePage({
               depth={displayDepth}
               loading={depthLoading}
               error={depthError}
-              current={displayPrice}
+              current={lastTradedPrice}
               trades={displayTrades}
               connected={feed === "connected"}
               illustrativeDepth={illustrativeDepth}
@@ -1785,6 +1777,7 @@ export function MarketTradePage({
                 setAccountRefresh((value) => value + 1);
                 onBalanceRefresh();
               }}
+              onPositionRefreshed={setPositionSummary}
             />
           </div>
         </div>

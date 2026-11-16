@@ -177,7 +177,7 @@ export const projectEngineEvent = async (event: DBEvent) => {
 
       //update funding interval event details after each occurence
       for (const interval of event.changes.funding_intervals) {
-        const inserted = await tx.fundingInterval.createMany({
+        await tx.fundingInterval.createMany({
           data: [
             {
               market_id: interval.market_id,
@@ -193,10 +193,6 @@ export const projectEngineEvent = async (event: DBEvent) => {
           ],
           skipDuplicates: true,
         });
-        if (inserted.count !== 1)
-          throw new Error(
-            `Duplicate funding interval ${interval.market_id}:${interval.interval_end_ms}`
-          );
       }
 
       //update payment details for each user during funding interval
@@ -213,6 +209,7 @@ export const projectEngineEvent = async (event: DBEvent) => {
             insurance_covered: BigInt(payment.insurance_covered),
             uncovered_shortfall: BigInt(payment.uncovered_shortfall),
           })),
+          skipDuplicates: true,
         });
       }
 
@@ -349,6 +346,15 @@ export const projectEngineEvent = async (event: DBEvent) => {
             shortfall_covered: BigInt(attempt.shortfall_covered),
             uncovered_shortfall: BigInt(attempt.uncovered_shortfall),
           },
+        });
+      }
+
+      // Mark a pending liquidation as recovered when the position returns
+      // above its maintenance requirement before any further fills occur.
+      for (const update of event.changes.liquidation_status_updates) {
+        await tx.liquidation.update({
+          where: { liquidation_id: update.liquidation_id },
+          data: { status: update.status },
         });
       }
 

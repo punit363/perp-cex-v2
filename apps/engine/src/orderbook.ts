@@ -102,6 +102,28 @@ class Orderbook {
 
   public getRestingOrderCount = (): number => this.orders.size;
 
+  public getMarketBuyLiquidity = (
+    requestedQuantity: bigint
+  ): { price: bigint; quantity: bigint }[] => {
+    const liquidity: { price: bigint; quantity: bigint }[] = [];
+    let remaining = requestedQuantity;
+    let pair = this.asks.nextHigherPair(undefined);
+    while (pair && remaining > 0n) {
+      const [price, level] = pair;
+      let node = level.head;
+      while (node && remaining > 0n) {
+        const quantity = min(remaining, node.quantity - node.filled);
+        if (quantity > 0n) {
+          liquidity.push({ price, quantity });
+          remaining -= quantity;
+        }
+        node = node.next;
+      }
+      pair = this.asks.nextHigherPair(price);
+    }
+    return liquidity;
+  };
+
   public getImpactPrices = (
     targetQuantity: bigint
   ): { bid: bigint; ask: bigint } | null => {
@@ -570,16 +592,10 @@ class Orderbook {
       }
     }
 
-    let odr_amount = odr_price;
-    let rem_amt = 0n;
     if (order.type == "MARKET") {
       let pair = this.asks.nextHigherPair(undefined);
 
-      marketBuyLevels: while (
-        pair &&
-        odr_amount > 0n &&
-        odr_filled < odr_quantity
-      ) {
+      while (pair && odr_filled < odr_quantity) {
         const [price, level] = pair;
         let current_node = level.head;
 
@@ -587,14 +603,8 @@ class Orderbook {
           if (!current_node) break;
           let { user_id, order_id, quantity, next } = current_node;
 
-          const affordable_qty = divideFixed(odr_amount, price, "floor");
-          if (affordable_qty === 0n) break marketBuyLevels;
-
           const remaining_qty = odr_quantity - odr_filled;
-          const fill_qty = min(
-            min(remaining_qty, affordable_qty),
-            quantity - current_node.filled
-          );
+          const fill_qty = min(remaining_qty, quantity - current_node.filled);
           if (fill_qty === 0n) {
             current_node = next;
             continue;
@@ -605,7 +615,6 @@ class Orderbook {
           odr_filled += fill_qty;
           current_node.filled += fill_qty;
           level.remaining_qty -= fill_qty;
-          odr_amount -= multiplyFixed(fill_qty, price, "ceil");
           const maker_order_margin_consumed =
             margin_before - this.remainingOrderMargin(current_node);
           const maker_order_fee_consumed =
@@ -642,12 +651,8 @@ class Orderbook {
           this.asks.delete(price);
         }
         pair = this.asks.nextHigherPair(price);
-        order.status = OrderStatus.FILLED;
       }
-
-      if (odr_amount > 0) {
-        rem_amt = odr_amount;
-      }
+      order.status = OrderStatus.FILLED;
     }
 
     this.updateMarketData(fills);
@@ -656,8 +661,8 @@ class Orderbook {
         order_id: order.order_id,
         filled: odr_filled,
         status: order.status,
-        rem_amt,
-        rem_qty: 0n,
+        rem_amt: 0n,
+        rem_qty: odr_quantity - odr_filled,
       },
       fills,
     };

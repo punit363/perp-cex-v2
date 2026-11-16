@@ -4,6 +4,16 @@ import { AppError } from "../utils/error";
 import { UserRepo } from "db/repositories/user.repo";
 import jwt from "jsonwebtoken";
 import CONFIG from "../config";
+import { loopback } from "../loopback";
+import type { EngineResponse, RequestToEngine } from "commons/src";
+
+async function ensureEngineAccount(user_id: string): Promise<void> {
+  const request: RequestToEngine = { action: "ENSURE_ACCOUNT", user_id };
+  const response = (await loopback(request)) as EngineResponse;
+  if (!response.status) {
+    throw new AppError(response.message || "Unable to initialize account", 503);
+  }
+}
 
 async function signup(req: Request, res: Response): Promise<void> {
   try {
@@ -20,6 +30,7 @@ async function signup(req: Request, res: Response): Promise<void> {
     }
 
     const newUser = await UserRepo.newUser(username, password);
+    await ensureEngineAccount(newUser.user_id);
 
     res.status(200).send(
       handleResponse("User successfully registered", 1, {
@@ -57,6 +68,10 @@ async function signin(req: Request, res: Response): Promise<void> {
     if (!verfied) {
       throw new AppError("Incorrect password, verify credentials", 403);
     }
+
+    // Accounts are in-memory and may be absent for users created before
+    // account registration was added, or after a restart before a snapshot.
+    await ensureEngineAccount(user.user_id);
 
     const token = jwt.sign(
       {

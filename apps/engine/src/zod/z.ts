@@ -204,6 +204,10 @@ const decimalToFixed = z.string().transform((value, context) => {
 
 const RequestToEngineSchema = z.discriminatedUnion("action", [
   z.object({
+    action: z.literal("ENSURE_ACCOUNT"),
+    user_id: z.string().min(1),
+  }),
+  z.object({
     action: z.literal("REGISTER_MARKET"),
     market_id: z.string().min(1),
     slug: z.string().regex(/^[A-Z0-9]+-[A-Z0-9]+$/),

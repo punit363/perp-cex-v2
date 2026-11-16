@@ -52,6 +52,7 @@ enum LiquidationStatus {
   LIQUIDATING
   COMPLETED
   BANKRUPT
+  RECOVERED
 }
 
 enum InsuranceFundEntryType {

@@ -2,6 +2,10 @@ import type { OrderSide, OrderStatus, OrderType } from "./order.type";
 
 type RequestToEngine =
   | {
+      action: "ENSURE_ACCOUNT";
+      user_id: string;
+    }
+  | {
       action: "REGISTER_MARKET";
       market_id: string;
       slug: string;

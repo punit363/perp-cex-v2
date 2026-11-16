@@ -1,0 +1,1 @@
+ALTER TYPE "LiquidationStatus" ADD VALUE 'RECOVERED';

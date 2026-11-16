@@ -116,6 +116,11 @@ const LiquidationAttemptChangeSchema = z.object({
   uncovered_shortfall: ScaledIntegerSchema
 });
 
+const LiquidationStatusChangeSchema = z.object({
+  liquidation_id: IdSchema,
+  status: z.literal("RECOVERED")
+});
+
 const CandleChangeSchema = z.object({
   market_id: IdSchema,
   start_ms: z.number().int().nonnegative(),
@@ -230,6 +235,7 @@ export const DBEventSchema = EventMetadataSchema.extend({
     insurance_fund: z.array(InsuranceFundChangeSchema).default([]),
     trading_fee_account: z.array(TradingFeeAccountChangeSchema).default([]),
     liquidation_attempts: z.array(LiquidationAttemptChangeSchema).default([]),
+    liquidation_status_updates: z.array(LiquidationStatusChangeSchema).default([]),
     funding_intervals: z.array(FundingIntervalChangeSchema).default([]),
     funding_payments: z.array(FundingPaymentChangeSchema).default([])
   })

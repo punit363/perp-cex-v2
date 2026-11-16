@@ -30,6 +30,7 @@ import {
   generate_liquidation_attempt_order_id,
   max,
 } from "./utils";
+import { planMarketBuy } from "./market-buy";
 import { EngineSnapshotSchema } from "./zod/z";
 import Orderbook from "./orderbook";
 import AccountStore from "./accounts";
@@ -107,8 +108,8 @@ class Engine {
         slug.split("-").at(-1) ?? "",
       ])
     );
-    const seededLeverageLimits = new Map(
-      markets.map(({ market_id, max_leverage }) => [market_id, max_leverage])
+    const marketDefinitions = new Map(
+      markets.map((market) => [market.market_id, market])
     );
     this.MAX_MARK_PRICE_AGE_MS = MARKET_CONFIG.MAX_MARK_PRICE_AGE_MS;
     this.MAINTENANCE_MARGIN_RATE = MARKET_CONFIG.MAINTENANCE_MARGIN_RATE;
@@ -144,22 +145,36 @@ class Engine {
       snapshot.markets.forEach((market_data) => {
         const funding = market_data.funding;
         const saved = market_data.risk_config;
+        const definition = marketDefinitions.get(market_data.market_id);
+        const databaseRiskIsConfigured =
+          definition?.maintenance_margin_rate !== null &&
+          definition?.maintenance_margin_rate !== undefined &&
+          definition.liquidation_fee_rate !== null &&
+          definition.liquidation_fee_rate !== undefined;
         this.markets.set(market_data.market_id, {
           book: new Orderbook(market_data, this.MAKER_FEE_RATE),
           quote: quotes.get(market_data.market_id) ?? "",
           risk: this.validateRiskConfig({
-            maintenanceMarginRate: saved
-              ? BigInt(saved.maintenance_margin_rate)
-              : this.MAINTENANCE_MARGIN_RATE,
-            liquidationFeeRate: saved
-              ? BigInt(saved.liquidation_fee_rate)
-              : this.LIQUIDATION_FEE_RATE,
-            maxLeverage: saved?.max_leverage
-              ? BigInt(saved.max_leverage)
-              : seededLeverageLimits.get(market_data.market_id) ?? null,
-            maxLiquidationQuantity: saved?.max_liquidation_quantity
-              ? BigInt(saved.max_liquidation_quantity)
-              : null,
+            maintenanceMarginRate: databaseRiskIsConfigured
+              ? definition!.maintenance_margin_rate!
+              : saved
+                ? BigInt(saved.maintenance_margin_rate)
+                : this.MAINTENANCE_MARGIN_RATE,
+            liquidationFeeRate: databaseRiskIsConfigured
+              ? definition!.liquidation_fee_rate!
+              : saved
+                ? BigInt(saved.liquidation_fee_rate)
+                : this.LIQUIDATION_FEE_RATE,
+            maxLeverage: databaseRiskIsConfigured
+              ? definition!.max_leverage
+              : saved?.max_leverage
+                ? BigInt(saved.max_leverage)
+                : definition?.max_leverage ?? null,
+            maxLiquidationQuantity: databaseRiskIsConfigured
+              ? definition!.max_liquidation_quantity
+              : saved?.max_liquidation_quantity
+                ? BigInt(saved.max_liquidation_quantity)
+                : definition?.max_liquidation_quantity ?? null,
           }),
           funding: funding
             ? {
@@ -225,7 +240,7 @@ class Engine {
 
       this.markets.set(
         market_id,
-        this.createMarketContext(market_id, quotes.get(market_id) ?? "", market.max_leverage)
+        this.createMarketContext(market, quotes.get(market_id) ?? "")
       );
     }
 
@@ -298,13 +313,12 @@ class Engine {
   };
 
   private createMarketContext = (
-    market_id: string,
-    quote: string,
-    maxLeverage: bigint | null
+    market: MarketDefinition,
+    quote: string
   ): MarketContext => ({
     book: new Orderbook(
       {
-        market_id,
+        market_id: market.market_id,
         last_traded_price: "0",
         last_trade_id: "",
         orders: [],
@@ -313,10 +327,12 @@ class Engine {
     ),
     quote,
     risk: this.validateRiskConfig({
-      maintenanceMarginRate: this.MAINTENANCE_MARGIN_RATE,
-      liquidationFeeRate: this.LIQUIDATION_FEE_RATE,
-      maxLeverage,
-      maxLiquidationQuantity: null,
+      maintenanceMarginRate:
+        market.maintenance_margin_rate ?? this.MAINTENANCE_MARGIN_RATE,
+      liquidationFeeRate:
+        market.liquidation_fee_rate ?? this.LIQUIDATION_FEE_RATE,
+      maxLeverage: market.max_leverage,
+      maxLiquidationQuantity: market.max_liquidation_quantity,
     }),
     funding: this.emptyFundingState(),
     positionUserIds: new Set(),
@@ -473,6 +489,8 @@ class Engine {
     this.replayTimestamp = replayTimestamp ?? null;
     try {
       switch (request.action) {
+        case "ENSURE_ACCOUNT":
+          return this.ensureAccount(request);
         case "ONRAMP":
           return this.onramp(request);
         case "GET_BALANCE":
@@ -625,6 +643,9 @@ class Engine {
                   liquidation_attempts: events.db.flatMap(
                     (event) => event.changes.liquidation_attempts ?? []
                   ),
+                  liquidation_status_updates: events.db.flatMap(
+                    (event) => event.changes.liquidation_status_updates ?? []
+                  ),
                   funding_intervals: events.db.flatMap(
                     (event) => event.changes.funding_intervals ?? []
                   ),
@@ -732,14 +753,36 @@ class Engine {
     return engine_response("Onramp successfull", 1);
   };
 
-  private getBalance = (request: CommandOf<"GET_BALANCE">): EngineResponse => {
-    const account = this.accounts.get(request.user_id);
-    if (!account) {
-      return engine_response("Balance Retrieved", 1, {
-        available: "0",
-        reserved: "0",
-      });
+  private ensureAccount = (
+    request: CommandOf<"ENSURE_ACCOUNT">
+  ): EngineResponse => {
+    const existing = this.accounts.get(request.user_id);
+    if (existing) {
+      return engine_response("Account is ready", 1);
     }
+
+    const account = this.accounts.getOrCreate(request.user_id);
+    this.emitDbEvent({
+      event_type: "BALANCE_CHANGE",
+      changes: {
+        balances: [
+          {
+            user_id: request.user_id,
+            available: account.collateral.available.toString(),
+            reserved: account.collateral.reserved.toString(),
+          },
+        ],
+        orders: [],
+        fills: [],
+        positions: [],
+        market_data: [],
+      },
+    });
+    return engine_response("Account created", 1);
+  };
+
+  private getBalance = (request: CommandOf<"GET_BALANCE">): EngineResponse => {
+    const account = this.accounts.getOrCreate(request.user_id);
 
     return engine_response("Balance Retrieved", 1, {
       available: formatFixed(account.collateral.available),
@@ -848,9 +891,17 @@ class Engine {
     this.markets.set(
       market_id,
       this.createMarketContext(
-        market_id,
-        quote,
-        maxLeverage ? BigInt(maxLeverage) * FIXED_POINT_CONSTANTS.SCALE : null
+        {
+          market_id,
+          slug,
+          maintenance_margin_rate: null,
+          liquidation_fee_rate: null,
+          max_leverage: maxLeverage
+            ? BigInt(maxLeverage) * FIXED_POINT_CONSTANTS.SCALE
+            : null,
+          max_liquidation_quantity: null,
+        },
+        quote
       )
     );
     if (isSupportedMarketSlug(slug)) this.tradableMarketIds.add(market_id);
@@ -1114,14 +1165,38 @@ class Engine {
   private calculateOrderReservation = (
     request: CommandOf<"PLACE_ORDER">,
     orderbook: Orderbook,
-    existingPosition?: Position
+    existingPosition?: Position,
+    available = 0n
   ): {
     initialMargin: bigint;
     feeReserve: bigint;
     requiredAvailable: bigint;
+    matchQuantity: bigint;
   } => {
     const { price, quantity, filled, leverage, side, type } = request;
     const remainingQuantity = quantity - filled;
+    if (type === OrderType.MARKET && side === OrderSide.BUY) {
+      const liquidity = orderbook.getMarketBuyLiquidity(remainingQuantity);
+      const plan = planMarketBuy(
+        liquidity,
+        available,
+        leverage,
+        existingPosition?.type === PositionType.SHORT
+          ? existingPosition.quantity
+          : 0n,
+        this.TAKER_FEE_RATE
+      );
+      if (liquidity.length > 0 && plan.quantity === 0n) {
+        throw new Error("Insufficient funds");
+      }
+      return {
+        initialMargin: plan.margin,
+        feeReserve: plan.fee,
+        requiredAvailable: plan.margin + plan.fee,
+        matchQuantity:
+          plan.quantity === 0n ? quantity : filled + plan.quantity,
+      };
+    }
     const bestOpposite = orderbook.getBestOppositePrice(side);
     const priceCap =
       side === OrderSide.SELL
@@ -1129,14 +1204,8 @@ class Engine {
           ? (bestOpposite ?? 0n)
           : max(price, bestOpposite ?? 0n)
         : price;
-    // Market buys use price as their quote budget
-    // sells cannot fill above the current best bid while this synchronous order executes.
-    const maximumNotional =
-      type === OrderType.MARKET && side === OrderSide.BUY
-        ? bestOpposite === undefined
-          ? 0n
-          : price
-        : calculateNotional(priceCap, remainingQuantity);
+    // Market sells cannot fill above the current best bid while this order executes.
+    const maximumNotional = calculateNotional(priceCap, remainingQuantity);
     const roundingAllowance =
       maximumNotional > 0n ? BigInt(orderbook.getRestingOrderCount() + 1) : 0n;
     const feeReserve =
@@ -1166,6 +1235,7 @@ class Engine {
       feeReserve,
       requiredAvailable:
         (type === OrderType.LIMIT ? maximumMargin : initialMargin) + feeReserve,
+      matchQuantity: quantity,
     };
   };
 
@@ -1222,7 +1292,13 @@ class Engine {
         initialMargin: initial_margin,
         feeReserve,
         requiredAvailable,
-      } = this.calculateOrderReservation(request, orderbook, existingPosition);
+        matchQuantity,
+      } = this.calculateOrderReservation(
+        request,
+        orderbook,
+        existingPosition,
+        account.collateral.available
+      );
       if (account.collateral.available < requiredAvailable) {
         throw new Error("Insufficient funds");
       }
@@ -1234,10 +1310,13 @@ class Engine {
         user_id,
         market_id,
         price,
-        quantity,
+        quantity: matchQuantity,
         leverage,
         ...order,
       });
+      if (order.type === OrderType.MARKET && order.side === OrderSide.BUY) {
+        result.order.rem_qty = quantity - result.order.filled;
+      }
 
       //calculate actual taker fees of filled qty
       let takerFees = 0n;
@@ -1991,11 +2070,7 @@ class Engine {
   private getPosition = (
     request: CommandOf<"GET_POSITION">
   ): EngineResponse => {
-    const account = this.accounts.get(request.user_id);
-    if (!account) {
-      throw new Error("Incorrect User ID");
-    }
-
+    const account = this.accounts.getOrCreate(request.user_id);
     const position = account.positions.get(request.market_id);
 
     if (!position) {
@@ -2117,8 +2192,45 @@ class Engine {
     );
     position.unrealized_pnl = risk.unrealizedPnl;
 
-    //trigger liquidity
-    if (risk.liquidatable || position.state === PositionState.LIQUIDATING) {
+    // A position can recover while a liquidation order is waiting for book
+    // liquidity. Stop retrying it once its equity is back above the risk
+    // requirement, and persist that recovery as the end of this liquidation.
+    if (!risk.liquidatable) {
+      if (position.state === PositionState.LIQUIDATING) {
+        const liquidation_id = position.liquidation_id;
+        position.state = PositionState.HEALTHY;
+        position.liquidation_id = undefined;
+        position.liquidation_attempts = 0;
+        this.emitDbEvent({
+          event_type: "LIQUIDATION",
+          changes: {
+            positions: [
+              {
+                user_id,
+                market_id,
+                position: {
+                  type: position.type,
+                  quantity: position.quantity,
+                  reserved_margin: position.reserved_margin,
+                  avg_entry_price: position.avg_entry_price,
+                  unrealized_pnl: position.unrealized_pnl,
+                  funding_accrued: position.funding_accrued,
+                  state: position.state,
+                  liquidation_attempts: position.liquidation_attempts,
+                },
+              },
+            ],
+            liquidation_status_updates: liquidation_id
+              ? [{ liquidation_id, status: "RECOVERED" }]
+              : [],
+          },
+        });
+      }
+      return;
+    }
+
+    //trigger liquidity only while the latest risk calculation is liquidatable
+    if (risk.liquidatable) {
       const sourceMessageId = this.currentSourceMessageId;
       if (!sourceMessageId) {
         throw new Error("Cannot liquidate without a source message ID");
