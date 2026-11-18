@@ -18,6 +18,14 @@ Apex is a demonstration perpetual futures exchange. It combines a price-time-pri
 
 Redis carries commands and events between services. PostgreSQL stores account and trade records. The engine maintains the live trading state and restores it from a snapshot plus the Redis stream after a restart. Caddy serves the frontend and proxies `/api` and `/ws`.
 
+### Engine recovery
+
+The engine writes a snapshot of its order books, balances, positions, mark prices, funding state, and the Redis stream ID of the last applied command. A snapshot is a point-in-time copy, so a crash can occur after the last snapshot and before the next one. On restart, the engine loads that snapshot and replays only the commands after its saved stream ID.
+
+Redis Streams are used instead of a destructive work queue because the same engine event must be consumed independently by the database projector and the WebSocket service. The stream IDs also provide the recovery cursor. Consumers acknowledge events after processing them; event projection must remain idempotent because a crash can cause an already-published command to be replayed.
+
+Retain the Redis and engine snapshot volumes together. A stream without a snapshot requires replaying all retained history, while a snapshot without the newer stream entries can lose commands that were accepted after the snapshot was saved.
+
 ## Run locally with Docker
 
 Install Docker Desktop or another Docker engine and a Compose command. On macOS with Colima, start it first:
